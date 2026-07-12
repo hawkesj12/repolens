@@ -30,6 +30,12 @@ DEFAULT_CONFIG = """\
 # `repolens init` AUTO-DISCOVERS databases and fills this in; edit by hand too.
 # [integrations.sqlite]
 # paths = ["data/app.db", "data/other.db"]   # one or many (legacy `path = "..."` also works)
+
+# Toolchain `repolens env` reports as PRESENT (with versions). `repolens init`
+# auto-seeds this from your manifests (pyproject -> python, package.json -> node,
+# ...). Edit freely — absence is the default, so only list what matters.
+# [env]
+# tools = ["git", "python", "node"]
 """
 
 
@@ -47,6 +53,22 @@ def active_sqlite_block(paths: list[str]) -> str:
         "\n# auto-discovered by `repolens init` (schema only, read-only)\n"
         "[integrations.sqlite]\n"
         f"paths = [{inner}]\n"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# active_env_block()
+# ═══════════════════════════════════════════════════════════════
+# The ACTIVE [env] block `repolens init` appends when detect_stack finds
+# the repo's toolchain. Valid TOML; appended after DEFAULT_CONFIG (whose
+# own [env] block is commented) so there is never a duplicate table.
+# ═══════════════════════════════════════════════════════════════
+def active_env_block(tools: list[str]) -> str:
+    inner = ", ".join(f'"{t}"' for t in tools)
+    return (
+        "\n# auto-seeded from this repo's manifests by `repolens init`\n"
+        "[env]\n"
+        f"tools = [{inner}]\n"
     )
 
 

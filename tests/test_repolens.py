@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 
-from repolens import cli, discover, find, index, lint, purpose, root, schema
+from repolens import (
+    cli,
+    digest,
+    discover,
+    env,
+    find,
+    hookgen,
+    index,
+    lint,
+    purpose,
+    root,
+    schema,
+)
 
 
 def _mkdb(path, tables):
@@ -249,3 +263,123 @@ def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init"])  # config exists, no --force → no discovery/append
     assert "[integrations.sqlite]" not in (tmp_path / ".repometa.toml").read_text()
+
+
+# ── digest ─────────────────────────────────────────────────────
+def test_digest_compact_reads_index_has_pointer(tmp_path):
+    _root, cfg = _repo(
+        tmp_path,
+        '[integrations.sqlite]\npaths = ["d.db"]\n',
+        {
+            "README.md": "# myrepo\n\nThe purpose line.\n",
+            "scripts/a.py": '"""does a thing."""\n',
+            "scripts/b.py": '"""another."""\n',
+        },
+    )
+    _mkdb(tmp_path / "d.db", ["trades", "accounts"])
+    out = digest.build_digest(tmp_path, cfg, max_lines=12)
+    lines = out.splitlines()
+    assert len(lines) <= 12
+    assert lines[0].startswith("[repolens] myrepo") and "The purpose line." in lines[0]
+    assert any("indexed:" in ln for ln in lines)
+    assert "scripts/ (2)" in out
+    assert "trades" in out and "accounts" in out
+    assert lines[-1].startswith("→")  # routing pointer is always last
+    assert "does a thing" not in out  # no file BODIES leak into the digest
+
+
+def test_digest_respects_max_lines(tmp_path):
+    files = {"README.md": "# r\n\np\n"}
+    for i in range(10):
+        files[f"dir{i}/f.py"] = '"""x."""\n'
+    _root, cfg = _repo(tmp_path, "", files)
+    out = digest.build_digest(tmp_path, cfg, max_lines=5)
+    assert len(out.splitlines()) <= 5
+    assert out.splitlines()[-1].startswith("→")
+
+
+# ── env ────────────────────────────────────────────────────────
+def test_env_probe_present_only_with_version(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "faketool").write_text("#!/bin/sh\necho 'faketool 9.9.9'\n")
+    (bindir / "faketool").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    _root, cfg = _repo(tmp_path, '[env]\ntools = ["faketool", "not-a-real-tool-xyz"]\n')
+    out = env.probe_env(cfg)
+    assert out.startswith("[env]")
+    assert "faketool 9.9.9" in out  # present, version parsed
+    assert "not-a-real-tool-xyz" not in out  # absent omitted
+
+
+def test_env_present_without_version_on_probe_failure(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "novertool").write_text("#!/bin/sh\nexit 1\n")  # --version fails
+    (bindir / "novertool").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    _root, cfg = _repo(tmp_path, '[env]\ntools = ["novertool"]\n')
+    assert "novertool" in env.probe_env(cfg)  # present even though version probe failed
+
+
+def test_env_detect_stack(tmp_path):
+    assert env.detect_stack(tmp_path) == ["git"]
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "package.json").write_text("{}")
+    stack = env.detect_stack(tmp_path)
+    assert stack[0] == "git" and "python" in stack and "node" in stack
+
+
+def test_load_config_env_tools_default_and_override(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["env_tools"] == ["git", "python", "node"]
+    _root, cfg = _repo(tmp_path, '[env]\ntools = ["go", "rust"]\n')
+    assert cfg["env_tools"] == ["go", "rust"]
+
+
+# ── hook (NON-DESTRUCTIVE) ─────────────────────────────────────
+def test_hook_snippet_is_valid_json(tmp_path):
+    frag = hookgen.snippet(with_env=False)
+    obj = json.loads(frag[frag.index("{") :])
+    assert obj["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "repolens digest"
+
+
+def test_hook_check_writes_nothing(tmp_path):
+    hookgen.install(tmp_path, check=True)
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_hook_install_additive_preserves_existing_and_idempotent(tmp_path):
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "my-existing.sh"}]}
+                    ]
+                },
+                "otherKey": 1,
+            }
+        )
+    )
+    hookgen.install(tmp_path)
+    data = json.loads(settings.read_text())
+    cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert "my-existing.sh" in cmds  # existing hook PRESERVED
+    assert "repolens digest" in cmds  # ours added
+    assert data["otherKey"] == 1  # other keys untouched
+    hookgen.install(tmp_path)  # idempotent
+    data2 = json.loads(settings.read_text())
+    cmds2 = [h["command"] for g in data2["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert cmds2.count("repolens digest") == 1
+
+
+def test_cmd_init_seeds_env_tools(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    cli.main(["init"])
+    cfg_text = (tmp_path / ".repometa.toml").read_text()
+    assert "[env]" in cfg_text and '"python"' in cfg_text
+    assert root.load_config(tmp_path)["env_tools"] == ["git", "python"]

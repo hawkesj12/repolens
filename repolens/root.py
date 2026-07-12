@@ -55,6 +55,10 @@ DEFAULT_CODE_EXTS = {
     ".rs",
 }
 
+# Generic default toolchain for `repolens env` when a repo sets no [env].tools
+# and init found no manifests. Kept minimal — NOT an opinionated stack.
+DEFAULT_ENV_TOOLS = ["git", "python", "node"]
+
 __all__ = ["find_root", "load_config", "CONFIG_NAME"]
 
 
@@ -87,7 +91,9 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
 #   index_path (Path, absolute), skip_dirs (set), skip_files (set),
 #   code_exts (set), types (dict name->{folder,recursive,exclude}),
 #   sqlite_paths (list[Path] — the optional DB-table integration, empty
-#   unless [integrations.sqlite] sets `paths` and/or the legacy `path`).
+#   unless [integrations.sqlite] sets `paths` and/or the legacy `path`),
+#   env_tools (list[str] — the `repolens env` toolchain allowlist, from
+#   [env].tools else DEFAULT_ENV_TOOLS).
 # A missing config / no tomllib → pure defaults (repo still indexes).
 # ═══════════════════════════════════════════════════════════════
 def load_config(root: pathlib.Path | str | None = None) -> dict:
@@ -136,6 +142,14 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
                     seen.add(resolved)
                     sqlite_paths.append(root / rel)
 
+    # Toolchain allowlist for `repolens env` — [env].tools, else the generic default.
+    env = data.get("env", {})
+    env_tools = (
+        list(env.get("tools", DEFAULT_ENV_TOOLS))
+        if isinstance(env, dict)
+        else list(DEFAULT_ENV_TOOLS)
+    )
+
     return {
         "root": root,
         "index_path": index_path,
@@ -144,4 +158,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "code_exts": code_exts,
         "types": types,
         "sqlite_paths": sqlite_paths,
+        "env_tools": env_tools,
     }

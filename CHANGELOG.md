@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-12
+
+### Added
+
+- **`repolens digest`** — a compact, budgeted (`--max-lines`) repo map read from the
+  index (name, what's indexed, busiest dirs, DB tables, and a `find`-vs-`rg` routing
+  pointer), for injecting at an agent's session start. Orientation, never a dump.
+- **`repolens env`** — an OS-aware, present-only toolchain probe: the OS plus the
+  installed tools (with versions) from a `[env].tools` allowlist that `init`
+  auto-seeds from the repo's manifests (`pyproject`→python, `package.json`→node, …).
+  Robust version probe (timeout, both streams, present-without-version fallback).
+- **`repolens hook`** — prints a Claude Code SessionStart-hook snippet by default;
+  `--install` **additively** merges it into the repo's `.claude/settings.json`
+  (never clobbers an existing hook or key, idempotent); `--check` dry-runs.
+- README repositioned as "the agent-context freshness layer" (own-your-context;
+  judgment-not-state; agent-agnostic; a `find` vs `rg` routing section).
+
 ## [0.2.0] — 2026-07-12
 
 ### Added
@@ -46,6 +63,7 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hawkesj12/repolens/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hawkesj12/repolens/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hawkesj12/repolens/releases/tag/v0.1.0

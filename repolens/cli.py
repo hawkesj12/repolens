@@ -1,4 +1,4 @@
-"""repolens.cli — the `repolens` command: init | index | find | lint."""
+"""repolens.cli — the `repolens` command: init | index | find | lint | digest | env | hook."""
 
 from __future__ import annotations
 
@@ -8,7 +8,18 @@ import stat
 import sys
 import time
 
-from . import __version__, discover, find, index, lint, root, templates
+from . import (
+    __version__,
+    digest,
+    discover,
+    env,
+    find,
+    hookgen,
+    index,
+    lint,
+    root,
+    templates,
+)
 
 
 def _ctx():
@@ -41,6 +52,12 @@ def cmd_init(args) -> int:
                 with open(cfg_path, "a", encoding="utf-8") as f:
                     f.write(templates.active_sqlite_block([rel for rel, _ in dbs]))
                 print(f"wired {len(dbs)} database(s) into [integrations.sqlite]")
+        # Auto-seed the `repolens env` toolchain from this repo's manifests.
+        stack = env.detect_stack(r)
+        if stack:
+            with open(cfg_path, "a", encoding="utf-8") as f:
+                f.write(templates.active_env_block(stack))
+            print(f"env toolchain: {', '.join(stack)}")
 
     gi = r / ".gitignore"
     line = ".repometa/"
@@ -123,6 +140,27 @@ def cmd_lint(args) -> int:
     return 1 if counts["error"] else 0
 
 
+def cmd_digest(args) -> int:
+    r, cfg = _ctx()
+    print(digest.build_digest(r, cfg, args.max_lines))
+    return 0
+
+
+def cmd_env(args) -> int:
+    _r, cfg = _ctx()
+    print(env.probe_env(cfg))
+    return 0
+
+
+def cmd_hook(args) -> int:
+    r, _cfg = _ctx()
+    if args.install or args.check:
+        print(hookgen.install(r, with_env=args.with_env, check=args.check))
+    else:
+        print(hookgen.snippet(with_env=args.with_env))
+    return 0
+
+
 # ═══════════════════════════════════════════════════════════════
 # main()
 # ═══════════════════════════════════════════════════════════════
@@ -162,6 +200,34 @@ def main(argv=None) -> int:
     )
     p_lint.add_argument("--stale-days", type=int, default=180)
     p_lint.set_defaults(func=cmd_lint)
+
+    p_digest = sub.add_parser(
+        "digest", help="compact, hook-ready repo map (read from the index)"
+    )
+    p_digest.add_argument(
+        "--max-lines", type=int, default=12, help="output budget (default 12)"
+    )
+    p_digest.set_defaults(func=cmd_digest)
+
+    sub.add_parser(
+        "env", help="OS + present toolchain, one line (for a SessionStart hook)"
+    ).set_defaults(func=cmd_env)
+
+    p_hook = sub.add_parser(
+        "hook", help="print (or --install) a SessionStart hook running digest/env"
+    )
+    p_hook.add_argument(
+        "--install",
+        action="store_true",
+        help="additively merge into the repo's .claude/settings.json (never clobbers)",
+    )
+    p_hook.add_argument(
+        "--check", action="store_true", help="dry-run: show what --install would add"
+    )
+    p_hook.add_argument(
+        "--with-env", action="store_true", help="also run `repolens env` in the hook"
+    )
+    p_hook.set_defaults(func=cmd_hook)
 
     args = ap.parse_args(argv)
     return args.func(args)
