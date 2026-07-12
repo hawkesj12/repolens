@@ -14,7 +14,7 @@ Builds a local SQLite (FTS5) index and answers ranked queries with a one-line de
 - **Markdown** — full text.
 - **Code / config** — indexed by each file's _purpose line_ (from its docstring or leading comment), so `repolens find "garmin ingest"` returns `scripts/ingest_garmin.py — "Pulls Garmin biometrics into the DB"`, not a wall of matches.
 - **Database tables** _(optional)_ — table + column names, so "where do trades live" resolves to a DB table.
-- Covers **gitignored / private content** that `.gitignore`-respecting tools skip, and ranks with **BM25** (degrading to a plain `LIKE` search — with a visible warning — if your SQLite lacks FTS5).
+- **Respects `.gitignore` by default** — so secrets, `.env`, and anything you ignore stay out of the index. Opt into `include_gitignored` when you _want_ gitignored notes searchable (a personal-knowledge-repo mode). Ranks with **BM25** (degrading to a plain `LIKE` search — with a visible warning — if your SQLite lacks FTS5).
 - The index is a **disposable, gitignored cache**: it auto-rebuilds when files change and can't drift. Delete it and it regenerates.
 
 **`repolens lint` — keep the knowledge base honest.**
@@ -31,18 +31,18 @@ Prints a SessionStart-hook snippet by default; `--install` **additively** merges
 
 ## Who it's for
 
-A repo that mixes **prose/knowledge with code** and is worked by an **agent that greps on demand rather than maintaining a semantic index** — [Claude Code](https://claude.com/claude-code) being the prime example. There, `repolens` gives a _ranked, described_ answer across docs + code + data including your private notes, plus lightweight enforced hygiene.
+A repo that mixes **prose/knowledge with code** and is worked by an **agent that greps on demand rather than maintaining a semantic index** — [Claude Code](https://claude.com/claude-code) being the prime example. There, `repolens` gives a _ranked, described_ answer across docs + code + data (and, when you opt in, your gitignored notes), plus lightweight enforced hygiene.
 
 ## What it's _not_
 
-Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a semantic/embeddings index like Cursor or Aider's repo-map, not a RAG system, and not a knowledge-management app. It's a lexical findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code purpose-lines, DB schema, and gitignored content — and keeps it clean.
+Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a semantic/embeddings index like Cursor or Aider's repo-map, not a RAG system, and not a knowledge-management app. It's a lexical findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code purpose-lines, and DB schema — and keeps it clean. It **respects `.gitignore` by default**; opt into `include_gitignored` when you want your ignored notes searchable too.
 
 ### When to use `repolens find` vs `rg`
 
 **Grep when you know the string; `repolens find` when you know the _concept_ but not the file.**
 
 - **`rg` / grep** → you know the literal string or regex, or you need _every_ match. Fast, complete, literal.
-- **`repolens find`** → _"where does X live / which file handles Y"_ — you want the _right few_ files, ranked and described, across docs + code purpose-lines + DB schema + gitignored content.
+- **`repolens find`** → _"where does X live / which file handles Y"_ — you want the _right few_ files, ranked and described, across docs + code purpose-lines + DB schema (plus your gitignored notes, when you opt in).
 
 repolens is **lexical (BM25)**, not embeddings — deliberately: for code, lexical ranking often beats dense retrieval and costs nothing.
 
@@ -110,7 +110,7 @@ The index (`.repometa/index.db`, gitignored) is a **cache derived from your file
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) — next up is **v0.4 incremental indexing** (only re-index changed files) for large repos.
+See [ROADMAP.md](ROADMAP.md) — next up is **v0.5 incremental indexing** (only re-index changed files) for large repos.
 
 ## License
 

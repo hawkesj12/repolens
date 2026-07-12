@@ -1,0 +1,38 @@
+# repolens config. The presence of this file marks the repo root.
+# Docs: https://github.com/hawkesj12/repolens
+
+[repolens]
+# index_path = ".repometa/index.db"   # default; a gitignored, disposable cache
+# skip_dirs = ["build", "vendor"]      # ADDED to sensible defaults (.git, node_modules, ...)
+# skip_files = ["CHANGELOG.md"]
+# code_exts = [".py", ".ts", ".go"]    # override the default code-file extensions
+# include_gitignored = true            # index gitignored file CONTENT too (default: false —
+                                       # .gitignore is respected, so secrets/.env stay out).
+                                       # Turn on for a personal/knowledge repo whose notes are
+                                       # gitignored and you WANT searchable. (DB schema is
+                                       # indexed regardless — names only, via [integrations.sqlite].)
+
+# Typed records: folder -> type. `recursive` classifies subfolders too.
+# `exclude` globs drop artifacts. `require` = regex patterns a conforming doc must
+# contain (a warn if missing). An explicit frontmatter `type:` overrides the folder.
+#
+# [types.doc]
+# folder = "docs"
+# recursive = true
+# exclude = ["*draft*"]
+# require = ["^# "]        # e.g. must have an H1
+
+# Optional: also index SQLite DB table/column names (schema only, read-only).
+# `repolens init` AUTO-DISCOVERS databases and fills this in; edit by hand too.
+# [integrations.sqlite]
+# paths = ["data/app.db", "data/other.db"]   # one or many (legacy `path = "..."` also works)
+
+# Toolchain `repolens env` reports as PRESENT (with versions). `repolens init`
+# auto-seeds this from your manifests (pyproject -> python, package.json -> node,
+# ...). Edit freely — absence is the default, so only list what matters.
+# [env]
+# tools = ["git", "python", "node"]
+
+# auto-seeded from this repo's manifests by `repolens init`
+[env]
+tools = ["git", "python"]

@@ -15,6 +15,11 @@ DEFAULT_CONFIG = """\
 # skip_dirs = ["build", "vendor"]      # ADDED to sensible defaults (.git, node_modules, ...)
 # skip_files = ["CHANGELOG.md"]
 # code_exts = [".py", ".ts", ".go"]    # override the default code-file extensions
+# include_gitignored = true            # index gitignored file CONTENT too (default: false —
+                                       # .gitignore is respected, so secrets/.env stay out).
+                                       # Turn on for a personal/knowledge repo whose notes are
+                                       # gitignored and you WANT searchable. (DB schema is
+                                       # indexed regardless — names only, via [integrations.sqlite].)
 
 # Typed records: folder -> type. `recursive` classifies subfolders too.
 # `exclude` globs drop artifacts. `require` = regex patterns a conforming doc must

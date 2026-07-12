@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-12
+
+### Changed
+
+- **`.gitignore` is now respected by default.** The file corpus (markdown + code)
+  skips any path git ignores — so secrets, `.env`, and ignored build output stay
+  out of the index. Detected via `git ls-files -co --exclude-standard`; a repo
+  with no git (or no `git` on PATH) still indexes everything, unchanged.
+- Set `include_gitignored = true` under `[repolens]` to index gitignored file
+  content too — the personal/knowledge-repo mode (notes you ignore but want
+  searchable). SQLite **schema** discovery is unaffected either way: table/column
+  names are indexed regardless of gitignore (names only, opt-in via
+  `[integrations.sqlite]`), since databases are usually — and safely — ignored.
+
 ## [0.3.0] — 2026-07-12
 
 ### Added
@@ -63,7 +77,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hawkesj12/repolens/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hawkesj12/repolens/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hawkesj12/repolens/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hawkesj12/repolens/releases/tag/v0.1.0

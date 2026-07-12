@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import pathlib
 import sqlite3
+import subprocess
 import time
 
 from . import purpose
@@ -34,17 +35,52 @@ def _frontmatter_blob(text: str) -> str:
     return ""
 
 
+# ═══════════════════════════════════════════════════════════════
+# _not_ignored()
+# ═══════════════════════════════════════════════════════════════
+# The set of repo-relative paths git does NOT ignore (tracked +
+# untracked-but-not-ignored), via `git ls-files -co --exclude-standard`.
+# Returns None when include_gitignored is set, or the root isn't a git
+# repo / git is missing — meaning "no gitignore to respect, index all".
+# Memoized on config so a build's ~4 walks share one git call.
+# ═══════════════════════════════════════════════════════════════
+def _not_ignored(root: pathlib.Path, config: dict):
+    if config.get("include_gitignored"):
+        return None
+    if "_not_ignored_cache" in config:
+        return config["_not_ignored_cache"]
+    result = None
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        result = {ln for ln in out.stdout.splitlines() if ln}
+    except (OSError, subprocess.SubprocessError):
+        result = None  # not a git repo / git missing → index everything
+    config["_not_ignored_cache"] = result
+    return result
+
+
 def _walk(root: pathlib.Path, config: dict, code: bool):
     skip_dirs, skip_files = config["skip_dirs"], config["skip_files"]
     exts = config["code_exts"]
+    allowed = _not_ignored(root, config)  # None = index all (see docstring)
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in skip_dirs]
         for fn in fns:
             is_code = os.path.splitext(fn)[1].lower() in exts
             if (code and is_code) or (not code and fn.endswith(".md")):
                 p = pathlib.Path(dp) / fn
-                if str(p.relative_to(root)) not in skip_files:
-                    yield p
+                rel = str(p.relative_to(root))
+                if rel in skip_files:
+                    continue
+                if allowed is not None and rel not in allowed:
+                    continue  # gitignored — skipped by default (see _not_ignored)
+                yield p
 
 
 # ═══════════════════════════════════════════════════════════════

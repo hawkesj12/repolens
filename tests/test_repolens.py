@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 
 from repolens import (
     cli,
@@ -383,3 +384,53 @@ def test_cmd_init_seeds_env_tools(tmp_path, monkeypatch):
     cfg_text = (tmp_path / ".repometa.toml").read_text()
     assert "[env]" in cfg_text and '"python"' in cfg_text
     assert root.load_config(tmp_path)["env_tools"] == ["git", "python"]
+
+
+# ── gitignore-respecting default ───────────────────────────────
+def _git_repo(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+
+
+def test_index_respects_gitignore_by_default(tmp_path):
+    _git_repo(tmp_path)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "README.md": "# a\n\np\n",
+            "public.md": "visible\n",
+            "SECRET.md": "hidden\n",
+            ".gitignore": "SECRET.md\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    md = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
+    con.close()
+    assert "public.md" in md and "README.md" in md
+    assert "SECRET.md" not in md  # gitignored → skipped by default
+
+
+def test_index_include_gitignored_opt_in(tmp_path):
+    _git_repo(tmp_path)
+    _root, cfg = _repo(
+        tmp_path,
+        "[repolens]\ninclude_gitignored = true\n",
+        {"SECRET.md": "hidden\n", ".gitignore": "SECRET.md\n"},
+    )
+    assert cfg["include_gitignored"] is True
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    md = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
+    con.close()
+    assert "SECRET.md" in md  # opt-in indexes gitignored content
+
+
+def test_index_all_when_not_a_git_repo(tmp_path):
+    # No `git init` — nothing to respect, so everything indexes (backward-compat).
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\np\n", ".gitignore": "a.md\n"})
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    md = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
+    con.close()
+    assert "a.md" in md  # not a git repo → no gitignore to respect

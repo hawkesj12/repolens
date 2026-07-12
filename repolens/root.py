@@ -113,6 +113,9 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     skip_dirs = DEFAULT_SKIP_DIRS | set(rl.get("skip_dirs", []))
     skip_files = set(rl.get("skip_files", []))
     code_exts = set(rl.get("code_exts", DEFAULT_CODE_EXTS))
+    # Respect .gitignore by DEFAULT — the file corpus skips gitignored paths
+    # unless include_gitignored is set (opt-in for personal/knowledge repos).
+    include_gitignored = bool(rl.get("include_gitignored", False))
 
     types = {}
     for name, spec in (data.get("types") or {}).items():
@@ -159,4 +162,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "types": types,
         "sqlite_paths": sqlite_paths,
         "env_tools": env_tools,
+        "include_gitignored": include_gitignored,
     }
