@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-12
+
+### Fixed
+
+- **`repolens env` now parses `v`-prefixed and hash-suffixed versions correctly.**
+  The version regex used a `\b\d` anchor, which has no word boundary between the
+  `v` and the digits in `node v25.8.0` — so it skipped the real version and grabbed
+  a later token (reported `node 8.0`, `duckdb 5.4`). Now anchored on "a dotted
+  number not preceded by a digit/dot," so `v25.8.0 → 25.8.0`, `v1.5.4 …hash → 1.5.4`.
+
 ## [0.4.1] — 2026-07-12
 
 ### Changed
@@ -91,7 +101,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/hawkesj12/repolens/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/hawkesj12/repolens/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hawkesj12/repolens/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hawkesj12/repolens/compare/v0.2.0...v0.3.0

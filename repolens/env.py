@@ -20,7 +20,11 @@ import subprocess
 __all__ = ["probe_env", "detect_stack"]
 
 _OS = {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}
-_VERSION_RE = re.compile(r"\b(\d+\.\d+(?:\.\d+)?)\b")
+# First dotted-number run, NOT preceded by a digit/dot — so a `v` prefix
+# (node `v25.8.0`) or trailing build hash (`v1.5.4 08e34c447b`) can't fool it.
+# A plain `\b\d` anchor fails here: there's no word boundary between `v` and `25`,
+# so it would skip the real version and grab a later token (`8.0`, `5.4`).
+_VERSION_RE = re.compile(r"(?<![\d.])(\d+\.\d+(?:\.\d+)*)")
 
 # manifest filename -> tool it implies (git is always probed)
 _MANIFESTS = {

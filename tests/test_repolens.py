@@ -323,6 +323,23 @@ def test_env_present_without_version_on_probe_failure(tmp_path, monkeypatch):
     assert "novertool" in env.probe_env(cfg)  # present even though version probe failed
 
 
+def test_env_version_regex_handles_v_prefix_and_trailing_hash():
+    # Real --version strings that a `\b\d` anchor mis-parsed: a `v` prefix has no
+    # word boundary before the digits (grabbed a later token), and a build hash
+    # after the version must not win.
+    cases = {
+        "v25.8.0": "25.8.0",  # node — was mis-parsed as "8.0"
+        "v1.5.4 (Variegata) 08e34c447b": "1.5.4",  # duckdb — was "5.4"
+        "ripgrep 14.1.1 (rev 63bb0ca0da)": "14.1.1",
+        "git version 2.50.1": "2.50.1",
+        "Python 3.12.7": "3.12.7",
+        "jq-1.6": "1.6",
+    }
+    for raw, want in cases.items():
+        m = env._VERSION_RE.search(raw)
+        assert m and m.group(1) == want, f"{raw!r} → {m and m.group(1)} (want {want})"
+
+
 def test_env_detect_stack(tmp_path):
     assert env.detect_stack(tmp_path) == ["git"]
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
