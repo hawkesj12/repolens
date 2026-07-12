@@ -86,8 +86,8 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
 # Parse <root>/.repometa.toml and merge over defaults. Returns a dict:
 #   index_path (Path, absolute), skip_dirs (set), skip_files (set),
 #   code_exts (set), types (dict name->{folder,recursive,exclude}),
-#   sqlite_path (Path|None — the optional DB-table integration, off
-#   unless [integrations.sqlite].path is set).
+#   sqlite_paths (list[Path] — the optional DB-table integration, empty
+#   unless [integrations.sqlite] sets `paths` and/or the legacy `path`).
 # A missing config / no tomllib → pure defaults (repo still indexes).
 # ═══════════════════════════════════════════════════════════════
 def load_config(root: pathlib.Path | str | None = None) -> dict:
@@ -118,12 +118,23 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
                 "require": list(spec.get("require", [])),
             }
 
-    sqlite_path = None
+    # SQLite integration accepts a `paths` LIST and a legacy singular `path`
+    # (kept for backward-compat); both merge, resolved + deduped, preserving order.
+    sqlite_paths: list[pathlib.Path] = []
     integ = data.get("integrations", {})
     if isinstance(integ, dict):
         sq = integ.get("sqlite", {})
-        if isinstance(sq, dict) and sq.get("path"):
-            sqlite_path = root / str(sq["path"])
+        if isinstance(sq, dict):
+            raw: list[str] = []
+            if sq.get("path"):
+                raw.append(str(sq["path"]))
+            raw.extend(str(p) for p in (sq.get("paths") or []))
+            seen: set[pathlib.Path] = set()
+            for rel in raw:
+                resolved = (root / rel).resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    sqlite_paths.append(root / rel)
 
     return {
         "root": root,
@@ -132,5 +143,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "skip_files": skip_files,
         "code_exts": code_exts,
         "types": types,
-        "sqlite_path": sqlite_path,
+        "sqlite_paths": sqlite_paths,
     }

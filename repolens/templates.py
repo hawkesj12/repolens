@@ -26,10 +26,29 @@ DEFAULT_CONFIG = """\
 # exclude = ["*draft*"]
 # require = ["^# "]        # e.g. must have an H1
 
-# Optional: also index a SQLite DB's table/column names (OFF unless set).
+# Optional: also index SQLite DB table/column names (schema only, read-only).
+# `repolens init` AUTO-DISCOVERS databases and fills this in; edit by hand too.
 # [integrations.sqlite]
-# path = "data/app.db"
+# paths = ["data/app.db", "data/other.db"]   # one or many (legacy `path = "..."` also works)
 """
+
+
+# ═══════════════════════════════════════════════════════════════
+# active_sqlite_block()
+# ═══════════════════════════════════════════════════════════════
+# The ACTIVE [integrations.sqlite] block `repolens init` appends when it
+# discovers databases. Rendered as valid TOML (a paths list of quoted,
+# repo-relative strings). Appended after DEFAULT_CONFIG, whose own sqlite
+# block is commented — so there is never a duplicate table.
+# ═══════════════════════════════════════════════════════════════
+def active_sqlite_block(paths: list[str]) -> str:
+    inner = ", ".join(f'"{p}"' for p in paths)
+    return (
+        "\n# auto-discovered by `repolens init` (schema only, read-only)\n"
+        "[integrations.sqlite]\n"
+        f"paths = [{inner}]\n"
+    )
+
 
 PRECOMMIT_HOOK = """\
 #!/bin/sh

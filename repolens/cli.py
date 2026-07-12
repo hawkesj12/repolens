@@ -8,7 +8,7 @@ import stat
 import sys
 import time
 
-from . import __version__, find, index, lint, root, templates
+from . import __version__, discover, find, index, lint, root, templates
 
 
 def _ctx():
@@ -31,6 +31,16 @@ def cmd_init(args) -> int:
     else:
         cfg_path.write_text(templates.DEFAULT_CONFIG, encoding="utf-8")
         print(f"wrote {cfg_path.relative_to(r)}")
+        # Auto-discover SQLite DBs and wire them in (only when we freshly wrote
+        # the config, so a re-run can't append a duplicate [integrations.sqlite]).
+        if not args.no_db:
+            dbs = discover.discover_sqlite_dbs(r, root.load_config(r))
+            for rel, n in dbs:
+                print(f"found {rel} ({n} tables) — indexing its schema")
+            if dbs:
+                with open(cfg_path, "a", encoding="utf-8") as f:
+                    f.write(templates.active_sqlite_block([rel for rel, _ in dbs]))
+                print(f"wired {len(dbs)} database(s) into [integrations.sqlite]")
 
     gi = r / ".gitignore"
     line = ".repometa/"
@@ -127,6 +137,9 @@ def main(argv=None) -> int:
         "init", help="scaffold .repometa.toml + gitignore + the pre-commit hook"
     )
     p_init.add_argument("--force", action="store_true", help="overwrite existing files")
+    p_init.add_argument(
+        "--no-db", action="store_true", help="skip SQLite auto-discovery"
+    )
     p_init.set_defaults(func=cmd_init)
 
     sub.add_parser("index", help="rebuild the search index").set_defaults(

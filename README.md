@@ -55,12 +55,16 @@ recursive = true               # classify subfolders too
 exclude = ["*draft*"]          # artifacts, not records
 require = ["^\\*\\*Date:\\*\\*"]  # regex a conforming doc must contain (a warn if missing)
 
-# Optional — also index a SQLite DB's table/column names (off unless set):
+# SQLite integration — index table/column NAMES (schema only, read-only).
+# `repolens init` AUTO-DISCOVERS the DBs in your repo (including gitignored
+# ones, skipping *.bak* backups) and fills this in. One or many:
 # [integrations.sqlite]
-# path = "data/app.db"
+# paths = ["data/app.db", "data/other.db"]   # legacy `path = "..."` also works
 ```
 
 An explicit `type:` in a doc's YAML frontmatter overrides the folder rule.
+
+**SQLite auto-discovery.** `repolens init` scans for `*.db` / `*.sqlite` / `*.sqlite3` files — **including gitignored ones** (real DBs usually are), skipping backups and its own index cache — and writes the ones it finds into `[integrations.sqlite]` for you, so `repolens find "where do trades live"` resolves to a DB table with no hand-config. It reads **only table and column names** (via `sqlite_master` + `PRAGMA table_info`, opened read-only) — never row data. Pass `repolens init --no-db` to skip it, or edit the `paths` list by hand.
 
 ## How it works
 

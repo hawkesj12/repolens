@@ -1,8 +1,8 @@
 """repolens.index — build the search index (a disposable SQLite cache).
 
 One `docs` table: one row per markdown file (full text), per code/config file
-(purpose line only — low noise, low leak), and, IF a `[integrations.sqlite]` DB
-is configured, per table in it. FTS5 is preferred; falls back to a plain table
+(purpose line only — low noise, low leak), and, for each `[integrations.sqlite]`
+DB configured, per table in it (schema only). FTS5 is preferred; falls back to a plain table
 (find.py searches it with LIKE) when the sqlite build lacks FTS5. Built to a temp
 file then os.replace()'d in atomically. Full rebuild (v0.1); incremental is v0.2.
 
@@ -71,9 +71,9 @@ def has_fts5() -> bool:
 # and `--rebuild` always rebuild regardless.
 # ═══════════════════════════════════════════════════════════════
 def corpus_newer_than(root: pathlib.Path, config: dict, mtime: float) -> bool:
-    sq = config["sqlite_path"]
-    if sq and sq.exists() and sq.stat().st_mtime > mtime:
-        return True
+    for sq in config["sqlite_paths"]:
+        if sq.exists() and sq.stat().st_mtime > mtime:
+            return True
     for code in (False, True):
         for p in _walk(root, config, code):
             try:
@@ -134,8 +134,11 @@ def build(
         code += 1
 
     tables = 0
-    sq = config["sqlite_path"]
-    if sq and sq.exists():  # OPTIONAL integration — off unless configured
+    for sq in config[
+        "sqlite_paths"
+    ]:  # OPTIONAL — schema only, read-only, off unless configured
+        if not sq.exists():
+            continue
         try:
             ext = sqlite3.connect(f"file:{sq}?mode=ro", uri=True)
             for (name,) in ext.execute(
