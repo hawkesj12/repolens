@@ -79,7 +79,20 @@ def cmd_init(args) -> int:
             hook.chmod(hook.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
             print("installed pre-commit lint hook")
     else:
-        print("(no .git found — skipped hook install)")
+        print("(no .git found — skipped pre-commit hook)")
+
+    # SessionStart digest hook — wired by DEFAULT, but only when this is a Claude
+    # Code repo (a `.claude/` dir already exists), so init never presumes a harness
+    # that isn't here. The install is ADDITIVE: hookgen.install integrates with any
+    # existing hooks and never clobbers them. --no-hook opts out.
+    if not args.no_hook:
+        if (r / ".claude").is_dir():
+            print(hookgen.install(r, with_env=True))
+        else:
+            print(
+                "(no .claude/ — skipped the SessionStart digest hook; "
+                "run `repolens hook --install` if you use Claude Code)"
+            )
     print('repolens initialized. Run `repolens index` then `repolens find "..."`.')
     return 0
 
@@ -154,10 +167,11 @@ def cmd_env(args) -> int:
 
 def cmd_hook(args) -> int:
     r, _cfg = _ctx()
+    with_env = not args.no_env
     if args.install or args.check:
-        print(hookgen.install(r, with_env=args.with_env, check=args.check))
+        print(hookgen.install(r, with_env=with_env, check=args.check))
     else:
-        print(hookgen.snippet(with_env=args.with_env))
+        print(hookgen.snippet(with_env=with_env))
     return 0
 
 
@@ -172,11 +186,17 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_init = sub.add_parser(
-        "init", help="scaffold .repometa.toml + gitignore + the pre-commit hook"
+        "init",
+        help="scaffold .repometa.toml + gitignore + hooks (pre-commit lint + SessionStart digest/env)",
     )
     p_init.add_argument("--force", action="store_true", help="overwrite existing files")
     p_init.add_argument(
         "--no-db", action="store_true", help="skip SQLite auto-discovery"
+    )
+    p_init.add_argument(
+        "--no-hook",
+        action="store_true",
+        help="don't install the SessionStart digest/env hook (auto-installed in Claude Code repos)",
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -225,7 +245,9 @@ def main(argv=None) -> int:
         "--check", action="store_true", help="dry-run: show what --install would add"
     )
     p_hook.add_argument(
-        "--with-env", action="store_true", help="also run `repolens env` in the hook"
+        "--no-env",
+        action="store_true",
+        help="don't also run `repolens env` in the hook (env is on by default)",
     )
     p_hook.set_defaults(func=cmd_hook)
 

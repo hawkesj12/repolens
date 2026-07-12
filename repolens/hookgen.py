@@ -1,11 +1,16 @@
 """repolens.hookgen — wire the digest/env into a Claude Code SessionStart hook.
 
+The hook runs `repolens digest && repolens env` — the freshness PAIR: a fresh repo
+map plus the real toolchain, injected every session. (env is on by default; the CLI
+`--no-env` drops it.)
+
 NON-DESTRUCTIVE by design. `repolens hook` PRINTS the snippet by default (zero
 writes). `--install` merges our command into the repo's `.claude/settings.json`
 ADDITIVELY — it reads the existing file, skips if already present (idempotent),
 appends, and never overwrites another key or an existing hook. `--check` is a
-dry-run. Because Claude Code runs all SessionStart hooks in parallel (deduped),
-appending is safe. Stdlib-only (json).
+dry-run. `repolens init` calls install() by default when the repo is a Claude Code
+repo (a `.claude/` dir exists). Because Claude Code runs all SessionStart hooks in
+parallel (deduped), appending is safe. Stdlib-only (json).
 """
 
 from __future__ import annotations

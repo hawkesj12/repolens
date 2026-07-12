@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-12
+
+### Changed
+
+- **`repolens init` now installs the SessionStart hook by default** — when the
+  repo is a Claude Code repo (a `.claude/` dir exists). The install is additive
+  (it integrates with any existing hooks and never clobbers them), so the fresh
+  repo map is the default payoff of `init`, not a hidden second command. In a
+  non-Claude repo, `init` writes no agent config and prints a one-line hint
+  instead — it never presumes a harness that isn't there. `init --no-hook` opts out.
+- **The SessionStart hook now runs `repolens digest && repolens env`** — the
+  freshness pair (the repo map _and_ the real toolchain), env on by default.
+  `repolens hook --no-env` drops env. (Replaces the old `--with-env` opt-in.)
+
 ## [0.4.0] — 2026-07-12
 
 ### Changed
@@ -77,7 +91,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/hawkesj12/repolens/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hawkesj12/repolens/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hawkesj12/repolens/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hawkesj12/repolens/compare/v0.1.0...v0.2.0

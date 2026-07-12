@@ -386,6 +386,46 @@ def test_cmd_init_seeds_env_tools(tmp_path, monkeypatch):
     assert root.load_config(tmp_path)["env_tools"] == ["git", "python"]
 
 
+def test_cmd_init_installs_session_hook_when_claude_repo(tmp_path, monkeypatch):
+    # A Claude Code repo (has .claude/) → init wires the SessionStart hook by
+    # DEFAULT, ADDITIVELY: an existing unrelated hook survives ("even if there
+    # are some"), and ours runs digest AND env.
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "memory.sh"}]}
+                    ]
+                }
+            }
+        )
+    )
+    cli.main(["init"])
+    data = json.loads(settings.read_text())
+    cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert "memory.sh" in cmds  # existing hook PRESERVED, not clobbered
+    assert "repolens digest && repolens env" in cmds  # ours, WITH env by default
+
+
+def test_cmd_init_no_hook_skips_session_hook(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    cli.main(["init", "--no-hook"])
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cmd_init_no_claude_dir_never_presumes_harness(tmp_path, monkeypatch, capsys):
+    # Not a Claude Code repo (no .claude/) → init writes no agent config.
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    cli.main(["init"])
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert "no .claude/" in capsys.readouterr().out
+
+
 # ── gitignore-respecting default ───────────────────────────────
 def _git_repo(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)

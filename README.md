@@ -58,14 +58,15 @@ Requires Python 3.11+.
 
 ```sh
 cd your-repo
-repolens init                 # writes .repometa.toml + .gitignore entry + the pre-commit hook;
-                              # auto-discovers your DBs and seeds [env].tools from your manifests
+repolens init                 # writes .repometa.toml + .gitignore + the pre-commit hook, auto-discovers
+                              # your DBs, seeds [env].tools, and — in a Claude Code repo — wires the
+                              # SessionStart digest/env hook (additively). --no-hook opts out.
 repolens index                # build the index (~fast; a disposable cache)
 repolens find "where's the deploy config"
 repolens lint
 repolens digest               # tiny repo map (for a hook)
 repolens env                  # OS + present toolchain (one line)
-repolens hook                 # print a SessionStart-hook snippet (add --install to wire it in)
+repolens hook                 # print the SessionStart-hook snippet (init already installs it)
 ```
 
 ## Configure (`.repometa.toml`)
@@ -92,15 +93,16 @@ An explicit `type:` in a doc's YAML frontmatter overrides the folder rule.
 
 ## Use with an agent (Claude Code SessionStart hook)
 
-`digest` and `env` just print to **stdout**, so they work with any agent or harness. For [Claude Code](https://claude.com/claude-code), a **SessionStart hook** injects their output into context fresh every session — a repo map and toolchain that regenerate rather than drift:
+`digest` and `env` just print to **stdout**, so they work with any agent or harness. For [Claude Code](https://claude.com/claude-code), a **SessionStart hook** injects their output into context fresh every session — a repo map and toolchain that regenerate rather than drift. **`repolens init` installs this hook for you** when the repo is a Claude Code repo (a `.claude/` dir exists); these commands are for adjusting it after the fact:
 
 ```sh
-repolens hook --install          # additively adds a SessionStart hook to .claude/settings.json
-repolens hook --install --with-env   # also run `repolens env` in the hook
+repolens hook --install          # additively (re)add the SessionStart hook to .claude/settings.json
+repolens hook --install --no-env # digest only — skip the `repolens env` line (env is on by default)
 repolens hook --check            # dry-run: show what it would add, write nothing
+repolens hook                    # just print the snippet (no writes)
 ```
 
-The install is **non-destructive** — it merges into your existing hooks, never overwrites them, and is idempotent. (The SessionStart hook is one integration; the commands themselves are agent-agnostic.)
+The install is **non-destructive** — it merges into your existing hooks, never overwrites them, and is idempotent. In a repo with no `.claude/`, `init` writes no agent config and prints a hint instead — it never presumes a harness that isn't there. (The SessionStart hook is one integration; the commands themselves are agent-agnostic.)
 
 > The `digest`/`env` output is **local agent context** — repo/tool _names_ and versions, never file contents or secrets. It's for your agent, not a shareable artifact.
 
