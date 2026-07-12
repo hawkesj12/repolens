@@ -14,14 +14,15 @@ Builds a local SQLite (FTS5) index and answers ranked queries with a one-line de
 - **Markdown** — full text.
 - **Code / config** — indexed by each file's _purpose line_ (from its docstring or leading comment), so `repolens find "garmin ingest"` returns `scripts/ingest_garmin.py — "Pulls Garmin biometrics into the DB"`, not a wall of matches.
 - **Database tables** _(optional)_ — table + column names, so "where do trades live" resolves to a DB table.
+- **Frontmatter — any keys, schema-free.** Every YAML frontmatter key is indexed into a sparse `frontmatter(relpath, key, value)` table, so docs with _different_ conventions (`paths:`, `name/description:`, `sector:`) coexist in one repo — repolens imposes no schema and clobbers none. A total, dependency-free parser degrades nested/exotic YAML to searchable text.
 - **Respects `.gitignore` by default** — so secrets, `.env`, and anything you ignore stay out of the index. Opt into `include_gitignored` when you _want_ gitignored notes searchable (a personal-knowledge-repo mode). Ranks with **BM25** (degrading to a plain `LIKE` search — with a visible warning — if your SQLite lacks FTS5).
-- The index is a **disposable, gitignored cache**: it auto-rebuilds when files change and can't drift. Delete it and it regenerates.
+- The index is a **disposable, gitignored cache**: it updates **incrementally** (only changed files, by content hash) and can't drift. `repolens index --rebuild` is the full backstop; delete it and it regenerates.
 
 **`repolens lint` — keep the knowledge base honest.**
 Zero-LLM structural checks (dead links, empty files, malformed frontmatter, duplicate titles) **and** per-type field checks you declare in config (e.g. a doc in `meetings/` must carry a `**Date:**`). A bundled **pre-commit hook** runs it and blocks a commit on errors — hygiene enforced, not hoped for.
 
-**`repolens digest` — a tiny, fresh map for an agent's context.**
-A compact, budgeted (`--max-lines`) orientation read from the index — repo name, what's indexed, the busiest dirs, the DB tables, and a routing pointer — for injecting at session start. Orientation, never a dump: more context _degrades_ an agent, so detail stays a pull (`find`).
+**`repolens digest` — a rich, fresh map for an agent's context.**
+A budgeted (`--max-lines`) orientation read from the index — repo name + purpose, **root folders each with a one-line purpose** (from a folder's `description` frontmatter or its README), the **database with every table grouped by prefix** (`fin_*`, `health_*`, … + `core` + `views`), and a routing pointer — for injecting at session start. Rich via _selection + grouping_, not volume: `--full` adds per-folder docs; detail otherwise stays a pull (`find`).
 
 **`repolens env` — the toolchain, detected not asserted.**
 One line: the OS plus the **present** tools (with versions) from a config allowlist that `init` auto-seeds from your repo's manifests. Absent tools are simply omitted. So an agent knows what it can actually run — correct on every machine, no drift.
@@ -108,11 +109,11 @@ The install is **non-destructive** — it merges into your existing hooks, never
 
 ## How it works
 
-The index (`.repometa/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. A full rebuild is fast for small/medium repos and can't go stale. Staleness is a local fast-path; anything uncertain just rebuilds.
+The index (`.repometa/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) — next up is **v0.5 incremental indexing** (only re-index changed files) for large repos.
+See [ROADMAP.md](ROADMAP.md) — **v0.5** shipped incremental indexing, schema-agnostic frontmatter, and the rich digest; next is an optional semantic tier and `llms.txt` export.
 
 ## License
 

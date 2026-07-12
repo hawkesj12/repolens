@@ -99,12 +99,19 @@ def cmd_init(args) -> int:
 
 def cmd_index(args) -> int:
     r, cfg = _ctx()
-    n, code, tables, ms = index.build(r, cfg)
-    kb = cfg["index_path"].stat().st_size / 1024
-    tbl = f" + {tables} db tables" if tables else ""
-    print(
-        f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r)} ({kb:.0f} KB)"
-    )
+    if args.rebuild or not cfg["index_path"].exists():
+        n, code, tables, ms = index.build(r, cfg)
+        kb = cfg["index_path"].stat().st_size / 1024
+        tbl = f" + {tables} db tables" if tables else ""
+        print(
+            f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r)} ({kb:.0f} KB)"
+        )
+    else:
+        changed, deleted, ms = index.build_incremental(r, cfg)
+        print(f"incremental: {changed} changed · {deleted} removed in {ms:.0f} ms")
+    if args.optimize:
+        index.optimize(cfg)
+        print("optimized index")
     return 0
 
 
@@ -155,7 +162,7 @@ def cmd_lint(args) -> int:
 
 def cmd_digest(args) -> int:
     r, cfg = _ctx()
-    print(digest.build_digest(r, cfg, args.max_lines))
+    print(digest.build_digest(r, cfg, args.max_lines, full=args.full))
     return 0
 
 
@@ -200,9 +207,16 @@ def main(argv=None) -> int:
     )
     p_init.set_defaults(func=cmd_init)
 
-    sub.add_parser("index", help="rebuild the search index").set_defaults(
-        func=cmd_index
+    p_index = sub.add_parser(
+        "index", help="update the search index (incremental; --rebuild for full)"
     )
+    p_index.add_argument(
+        "--rebuild", action="store_true", help="full rebuild from scratch (backstop)"
+    )
+    p_index.add_argument(
+        "--optimize", action="store_true", help="compact the FTS5 index after"
+    )
+    p_index.set_defaults(func=cmd_index)
 
     p_find = sub.add_parser("find", help="ranked 'where does X live' search")
     p_find.add_argument("query", nargs="+")
@@ -225,7 +239,10 @@ def main(argv=None) -> int:
         "digest", help="compact, hook-ready repo map (read from the index)"
     )
     p_digest.add_argument(
-        "--max-lines", type=int, default=12, help="output budget (default 12)"
+        "--max-lines", type=int, default=40, help="output budget (default 40)"
+    )
+    p_digest.add_argument(
+        "--full", action="store_true", help="richer tier: per-folder docs + notes"
     )
     p_digest.set_defaults(func=cmd_digest)
 

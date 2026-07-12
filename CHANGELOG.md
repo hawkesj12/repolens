@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-12
+
+### Added
+
+- **Incremental indexing.** `repolens index` now re-indexes only changed files —
+  a `files(relpath,size,mtime,hash)` table drives a stat-gate → blake2b hash →
+  `DELETE`/`INSERT` upsert → delete-reconcile pass, in one WAL transaction. A
+  `touch` or a fresh clone (which resets mtimes) does **not** re-index unchanged
+  content (the hash confirms). `repolens index --rebuild` is the always-correct
+  full backstop; `--optimize` compacts on demand; FTS5 auto-optimizes every ~200
+  changes. Read-path (`find`/`digest`) refreshes are now incremental.
+- **Schema-agnostic frontmatter indexing.** A sparse EAV table
+  `frontmatter(relpath, key, value)` makes _any_ frontmatter key queryable — a doc
+  has no row for a key it lacks, so different conventions (e.g. `paths:`,
+  `name/description:`, `sector:`) coexist in one repo with **no schema imposed or
+  clobbered**. Parsed by a **total, stdlib-only** flat-frontmatter parser
+  (`frontmatter.py`) that degrades nested/malformed YAML to searchable text and
+  never raises — no `pyyaml` dependency. The flattened block stays in the FTS index
+  for full-text.
+
+### Changed
+
+- **Richer `digest`.** The session-start map now lists **root folders each with a
+  one-line purpose** (from a folder's `description` frontmatter or its README/H1)
+  and the **database name with every table grouped by prefix** (`fin_*`,
+  `health_*`, … + `core` + `views`) instead of a flat list truncated at 12. A new
+  `--full` tier adds per-folder docs with their descriptions; `--max-lines`
+  (default raised to 40) stays the budget guard; it degrades gracefully with no DB
+  / no frontmatter / no README. Richness via selection + grouping, not volume.
+
 ## [0.4.3] — 2026-07-12
 
 ### Changed
@@ -112,7 +142,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hawkesj12/repolens/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/hawkesj12/repolens/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/hawkesj12/repolens/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/hawkesj12/repolens/compare/v0.4.0...v0.4.1

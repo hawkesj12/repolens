@@ -1,37 +1,33 @@
 """repolens.index — build the search index (a disposable SQLite cache).
 
 One `docs` table: one row per markdown file (full text), per code/config file
-(purpose line only — low noise, low leak), and, for each `[integrations.sqlite]`
-DB configured, per table in it (schema only). FTS5 is preferred; falls back to a plain table
-(find.py searches it with LIKE) when the sqlite build lacks FTS5. Built to a temp
-file then os.replace()'d in atomically. Full rebuild (v0.1); incremental is v0.2.
+(purpose line only), and per DB table (schema only). FTS5 is preferred; falls back
+to a plain table when the sqlite build lacks FTS5. A `frontmatter` EAV table
+(relpath, key, value) makes any frontmatter key queryable — sparse (a doc has no
+row for a key it lacks), schema-imposing NOTHING. A `files` table (relpath, size,
+mtime, hash) drives INCREMENTAL indexing: `build_incremental()` stat-gates → hashes
+→ upserts only changed files and reconciles deletes, in one WAL transaction. Full
+`build()` (temp file + os.replace) stays the always-correct `--rebuild` backstop.
 
 All paths/skip-lists/extensions come from config — nothing repo-specific here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 import sqlite3
 import subprocess
 import time
 
-from . import purpose
+from . import frontmatter, purpose
 
 
 def _first_heading(text: str) -> str:
     for line in text.splitlines():
         if line.startswith("#"):
             return line.lstrip("#").strip()
-    return ""
-
-
-def _frontmatter_blob(text: str) -> str:
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            return text[3:end].replace("\n", " ")
     return ""
 
 
@@ -121,64 +117,108 @@ def corpus_newer_than(root: pathlib.Path, config: dict, mtime: float) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-# build()
+# _content_hash()
 # ═══════════════════════════════════════════════════════════════
-# (Re)build the index from scratch into a temp DB, then atomically
-# os.replace() it over config["index_path"]. Returns (n_docs, n_code,
-# n_tables, elapsed_ms).
+# A cross-machine-stable change signal (blake2b, 16-byte digest) — the
+# correctness backstop behind the cheap size+mtime stat-gate. mtime is
+# unreliable across clones/machines; the hash is not.
 # ═══════════════════════════════════════════════════════════════
-def build(
-    root: pathlib.Path, config: dict, db_path: pathlib.Path | None = None
-) -> tuple[int, int, int, float]:
-    t0 = time.time()
-    db_path = db_path or config["index_path"]
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = db_path.with_name(f"{db_path.name}.tmp-{os.getpid()}")
-    tmp.unlink(missing_ok=True)
-    con = sqlite3.connect(tmp)
+def _content_hash(p: pathlib.Path) -> str:
+    h = hashlib.blake2b(digest_size=16)
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _stat(p: pathlib.Path) -> tuple[int, float]:
+    st = p.stat()
+    return st.st_size, st.st_mtime
+
+
+def _db_sig(config: dict) -> str:
+    """A signature of the configured DBs' mtimes — so db-table rows are
+    refreshed only when a DB file actually changed."""
+    parts = []
+    for sq in config["sqlite_paths"]:
+        try:
+            parts.append(f"{sq}:{sq.stat().st_mtime}")
+        except OSError:
+            continue
+    return "|".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════
+# _create_schema()
+# ═══════════════════════════════════════════════════════════════
+# docs (FTS5 or plain) + the sparse frontmatter EAV + the files
+# bookkeeping table + a tiny meta kv. Nothing repo-specific.
+# ═══════════════════════════════════════════════════════════════
+def _create_schema(con: sqlite3.Connection) -> None:
     if has_fts5():
         con.execute(
             "CREATE VIRTUAL TABLE docs USING fts5(relpath, title, frontmatter, body, kind UNINDEXED)"
         )
     else:
         con.execute("CREATE TABLE docs (relpath, title, frontmatter, body, kind)")
+    con.execute("CREATE TABLE frontmatter (relpath TEXT, key TEXT, value TEXT)")
+    con.execute("CREATE INDEX fm_key ON frontmatter(key, value)")
+    con.execute("CREATE INDEX fm_rel ON frontmatter(relpath)")
+    con.execute(
+        "CREATE TABLE files (relpath TEXT PRIMARY KEY, size INTEGER, mtime REAL, hash TEXT)"
+    )
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
 
-    n = 0
-    for p in _walk(root, config, code=False):
-        try:
-            text = p.read_text(errors="ignore")
-        except Exception:
-            continue
-        rel = str(p.relative_to(root))
-        con.execute(
-            "INSERT INTO docs VALUES (?,?,?,?,?)",
-            (rel, _first_heading(text), _frontmatter_blob(text), text, "md"),
-        )
-        n += 1
 
-    code = 0
-    for p in _walk(root, config, code=True):
-        try:
-            text = p.read_text(errors="ignore")
-        except Exception:
-            continue
-        rel = str(p.relative_to(root))
+# ═══════════════════════════════════════════════════════════════
+# _insert_doc()
+# ═══════════════════════════════════════════════════════════════
+# Index one file into `docs` (+ frontmatter EAV rows for markdown).
+# Caller owns the `files` bookkeeping row. Returns True if indexed.
+# ═══════════════════════════════════════════════════════════════
+def _insert_doc(
+    con: sqlite3.Connection, root: pathlib.Path, p: pathlib.Path, is_code: bool
+) -> bool:
+    rel = str(p.relative_to(root))
+    try:
+        text = p.read_text(errors="ignore")
+    except Exception:
+        return False
+    if is_code:
         pl = purpose.extract_purpose(rel, text)
         con.execute(
             "INSERT INTO docs VALUES (?,?,?,?,?)", (rel, pl or p.name, "", pl, "code")
         )
-        code += 1
+    else:
+        kv, block = frontmatter.parse_frontmatter(text)
+        con.execute(
+            "INSERT INTO docs VALUES (?,?,?,?,?)",
+            (rel, _first_heading(text), block.replace("\n", " "), text, "md"),
+        )
+        if kv:
+            con.executemany(
+                "INSERT INTO frontmatter VALUES (?,?,?)",
+                [(rel, k, v) for k, v in kv.items()],
+            )
+    return True
 
+
+# ═══════════════════════════════════════════════════════════════
+# _index_db_tables()
+# ═══════════════════════════════════════════════════════════════
+# Insert one docs row per table/view of each configured SQLite DB —
+# schema only (names), read-only. Returns the table count.
+# ═══════════════════════════════════════════════════════════════
+def _index_db_tables(con: sqlite3.Connection, config: dict) -> int:
     tables = 0
-    for sq in config[
-        "sqlite_paths"
-    ]:  # OPTIONAL — schema only, read-only, off unless configured
+    for sq in config["sqlite_paths"]:
         if not sq.exists():
             continue
         try:
             ext = sqlite3.connect(f"file:{sq}?mode=ro", uri=True)
-            for (name,) in ext.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            for name, typ in ext.execute(
+                "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') "
+                "AND name NOT LIKE 'sqlite_%'"  # skip internal bookkeeping tables
             ):
                 cols = ", ".join(
                     c[1] for c in ext.execute(f"PRAGMA table_info('{name}')")
@@ -189,7 +229,7 @@ def build(
                         f"{sq.name} :: {name}",
                         name,
                         "",
-                        f"{sq.name} table {name} columns: {cols}",
+                        f"{sq.name} {typ} {name} columns: {cols}",
                         "db-table",
                     ),
                 )
@@ -197,8 +237,162 @@ def build(
             ext.close()
         except sqlite3.Error:
             pass
+    return tables
 
+
+# ═══════════════════════════════════════════════════════════════
+# build()
+# ═══════════════════════════════════════════════════════════════
+# FULL rebuild from scratch into a temp DB, then atomically
+# os.replace() it over config["index_path"]. The always-correct
+# `--rebuild` backstop. Returns (n_docs, n_code, n_tables, elapsed_ms).
+# ═══════════════════════════════════════════════════════════════
+def build(
+    root: pathlib.Path, config: dict, db_path: pathlib.Path | None = None
+) -> tuple[int, int, int, float]:
+    t0 = time.time()
+    db_path = db_path or config["index_path"]
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = db_path.with_name(f"{db_path.name}.tmp-{os.getpid()}")
+    tmp.unlink(missing_ok=True)
+    con = sqlite3.connect(tmp)
+    _create_schema(con)
+
+    n = code = 0
+    for is_code in (False, True):
+        for p in _walk(root, config, code=is_code):
+            if not _insert_doc(con, root, p, is_code):
+                continue
+            try:
+                size, mtime = _stat(p)
+                con.execute(
+                    "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                    (str(p.relative_to(root)), size, mtime, _content_hash(p)),
+                )
+            except OSError:
+                pass
+            code += is_code
+            n += not is_code
+
+    tables = _index_db_tables(con, config)
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (_db_sig(config),))
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize','0')")
+    if has_fts5():
+        con.execute("INSERT INTO docs(docs) VALUES('optimize')")
     con.commit()
     con.close()
     os.replace(tmp, db_path)
     return n, code, tables, (time.time() - t0) * 1000
+
+
+# ═══════════════════════════════════════════════════════════════
+# build_incremental()
+# ═══════════════════════════════════════════════════════════════
+# Re-index ONLY changed files against the live index, in one WAL
+# transaction. Stat-gate (size+mtime) → hash-confirm → DELETE+INSERT
+# upsert on the regular FTS5 table → delete-reconcile vanished files.
+# db-tables refresh only when a DB file's mtime changed. optimize() every
+# ~200 writes. Falls back to a full build() when the index is missing or
+# predates this schema. Returns (changed, deleted, elapsed_ms).
+# ═══════════════════════════════════════════════════════════════
+def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float]:
+    t0 = time.time()
+    db_path = config["index_path"]
+    if not db_path.exists():
+        n, code, tables, _ = build(root, config)
+        return n + code + tables, 0, (time.time() - t0) * 1000
+    con = sqlite3.connect(db_path)
+    con.execute("PRAGMA journal_mode=WAL")
+    have = {
+        r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if not {"files", "frontmatter", "meta"} <= have:
+        con.close()  # index predates the incremental schema → full rebuild
+        n, code, tables, _ = build(root, config)
+        return n + code + tables, 0, (time.time() - t0) * 1000
+
+    changed = deleted = 0
+    con.execute("BEGIN")
+    stored = {
+        r[0]: (r[1], r[2], r[3])
+        for r in con.execute("SELECT relpath, size, mtime, hash FROM files")
+    }
+    seen: set[str] = set()
+    for is_code in (False, True):
+        for p in _walk(root, config, code=is_code):
+            rel = str(p.relative_to(root))
+            seen.add(rel)
+            try:
+                size, mtime = _stat(p)
+            except OSError:
+                continue
+            prev = stored.get(rel)
+            if prev and prev[0] == size and abs(prev[1] - mtime) < 1e-6:
+                continue  # stat-gate: unchanged, no read
+            h = _content_hash(p)
+            if prev and prev[2] == h:
+                con.execute(
+                    "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
+                )  # touched but identical (e.g. after a clone) — refresh mtime only
+                continue
+            con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
+            con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
+            if _insert_doc(con, root, p, is_code):
+                con.execute(
+                    "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                    (rel, size, mtime, h),
+                )
+                changed += 1
+
+    for rel in set(stored) - seen:  # delete-reconcile
+        con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
+        con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
+        con.execute("DELETE FROM files WHERE relpath=?", (rel,))
+        deleted += 1
+
+    cur_sig = _db_sig(config)
+    prev_sig = (
+        con.execute("SELECT value FROM meta WHERE key='db_sig'").fetchone() or ("",)
+    )[0]
+    if cur_sig != prev_sig:
+        con.execute("DELETE FROM docs WHERE kind='db-table'")
+        _index_db_tables(con, config)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (cur_sig,))
+
+    w = int(
+        (
+            con.execute(
+                "SELECT value FROM meta WHERE key='writes_since_optimize'"
+            ).fetchone()
+            or ("0",)
+        )[0]
+    )
+    w += changed + deleted
+    if w >= 200 and has_fts5():
+        con.execute("INSERT INTO docs(docs) VALUES('optimize')")
+        w = 0
+    con.execute(
+        "INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize', ?)", (str(w),)
+    )
+    con.commit()
+    con.close()
+    return changed, deleted, (time.time() - t0) * 1000
+
+
+# ═══════════════════════════════════════════════════════════════
+# optimize()
+# ═══════════════════════════════════════════════════════════════
+# Manually compact the FTS5 index (merge b-trees) and reset the
+# writes-since-optimize counter. No-op without FTS5 / a missing index.
+# ═══════════════════════════════════════════════════════════════
+def optimize(config: dict) -> None:
+    db_path = config["index_path"]
+    if not db_path.exists() or not has_fts5():
+        return
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("INSERT INTO docs(docs) VALUES('optimize')")
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize','0')")
+        con.commit()
+    finally:
+        con.close()

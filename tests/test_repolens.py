@@ -13,6 +13,7 @@ from repolens import (
     discover,
     env,
     find,
+    frontmatter,
     hookgen,
     index,
     lint,
@@ -129,7 +130,9 @@ def test_build_atomic_single_docs_table(tmp_path):
     names = {
         r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
-    assert "docs" in names and "meta" not in names
+    # v0.5 schema: docs + the incremental/frontmatter bookkeeping tables
+    assert {"docs", "files", "frontmatter", "meta"} <= names
+    assert not list((tmp_path / ".repometa").glob("*.tmp-*"))  # temp swapped away
     kinds = {r[0] for r in con.execute("SELECT DISTINCT kind FROM docs")}
     assert "md" in kinds and "code" in kinds
     con.close()
@@ -491,3 +494,178 @@ def test_index_all_when_not_a_git_repo(tmp_path):
     md = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
     con.close()
     assert "a.md" in md  # not a git repo → no gitignore to respect
+
+
+# ── frontmatter parser (total, stdlib) ─────────────────────────
+def test_frontmatter_parses_flat_kv():
+    kv, block = frontmatter.parse_frontmatter(
+        "---\ntitle: Hello\ntags: [a, b]\ndomain: x\n---\n# H\n\nbody\n"
+    )
+    assert kv["title"] == "Hello" and kv["tags"] == "a, b" and kv["domain"] == "x"
+    assert "title: Hello" in block
+    kv2, _ = frontmatter.parse_frontmatter("---\naliases:\n  - one\n  - two\n---\nx")
+    assert kv2["aliases"] == "one, two"  # block list flattened
+
+
+def test_frontmatter_degrades_nested_to_text():
+    kv, block = frontmatter.parse_frontmatter(
+        "---\nmeta:\n  a: 1\n  b: 2\ntop: ok\n---\nbody\n"
+    )
+    assert kv.get("top") == "ok"
+    assert "meta" not in kv  # nested map → no KV row (degraded)
+    assert "a: 1" in block  # still in the raw block for full-text
+
+
+def test_frontmatter_never_raises_on_malformed():
+    for bad in [
+        "---\nunclosed fence\n# no close",
+        "---\n: : :\n---\n",
+        "not frontmatter at all",
+        "---\n---\n",
+        "",
+    ]:
+        kv, block = frontmatter.parse_frontmatter(bad)
+        assert isinstance(kv, dict) and isinstance(block, str)
+
+
+# ── frontmatter EAV indexing (schema-agnostic) ─────────────────
+def test_index_frontmatter_eav_sparse_arbitrary_keys(tmp_path):
+    # Two DIFFERENT frontmatter conventions in one repo — both index, sparsely.
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "rules/x.md": "---\npaths: ['*.py']\ntype: rule\n---\n# X\n\nbody\n",
+            "mem/y.md": "---\nname: y\ndescription: a memo\nstatus: active\n---\n# Y\n\nb\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rows = {
+        (r[0], r[1]): r[2]
+        for r in con.execute("SELECT relpath, key, value FROM frontmatter")
+    }
+    con.close()
+    assert rows[("rules/x.md", "type")] == "rule"
+    assert rows[("rules/x.md", "paths")] == "*.py"
+    assert rows[("mem/y.md", "description")] == "a memo"
+    assert ("rules/x.md", "description") not in rows  # sparse: absent key = no row
+
+
+def test_index_keeps_fts_frontmatter_blob(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "---\ndomain: retirement\n---\n# A\n\nbody\n"}
+    )
+    index.build(tmp_path, cfg)
+    hits = find.search(cfg, "retirement")  # a frontmatter value is full-text searchable
+    assert any(h["relpath"] == "a.md" for h in hits)
+
+
+# ── incremental indexing ───────────────────────────────────────
+def test_incremental_reindexes_only_changed(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "# A\n\nalpha\n", "b.md": "# B\n\nbeta\n"}
+    )
+    index.build(tmp_path, cfg)
+    (tmp_path / "a.md").write_text("# A2\n\nalphachanged\n")
+    changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
+    assert changed == 1 and deleted == 0
+    assert any(h["relpath"] == "a.md" for h in find.search(cfg, "alphachanged"))
+
+
+def test_incremental_detects_add(tmp_path):
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nalpha\n"})
+    index.build(tmp_path, cfg)
+    (tmp_path / "c.md").write_text("# C\n\ngamma\n")
+    changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
+    assert changed == 1 and deleted == 0
+    assert any(h["relpath"] == "c.md" for h in find.search(cfg, "gamma"))
+
+
+def test_incremental_reconciles_delete(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "# A\n\nalpha\n", "b.md": "# B\n\nbeta\n"}
+    )
+    index.build(tmp_path, cfg)
+    (tmp_path / "b.md").unlink()
+    changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
+    assert deleted == 1
+    assert not any(h["relpath"] == "b.md" for h in find.search(cfg, "beta"))
+    con = sqlite3.connect(cfg["index_path"])
+    assert not con.execute("SELECT 1 FROM files WHERE relpath='b.md'").fetchone()
+    con.close()
+
+
+def test_rebuild_full_still_works(tmp_path):
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nalpha\n"})
+    index.build(tmp_path, cfg)
+    (tmp_path / "a.md").write_text("# A\n\nalpha delta\n")
+    index.build_incremental(tmp_path, cfg)
+    n, code, _t, _ms = index.build(tmp_path, cfg)  # full rebuild parity
+    assert n == 1
+    assert any(h["relpath"] == "a.md" for h in find.search(cfg, "delta"))
+
+
+# ── rich, tiered digest ────────────────────────────────────────
+def test_digest_folders_have_purpose(tmp_path):
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "README.md": "# myrepo\n\nthe repo purpose.\n",
+            "money/a.md": "---\ndescription: tracks the budget\n---\n# Budget\n\nx\n",
+            "money/b.md": "# B\n\ny\n",
+        },
+    )
+    out = digest.build_digest(tmp_path, cfg)
+    assert out.startswith("[repolens] myrepo")
+    assert "money/" in out and "tracks the budget" in out  # folder purpose from EAV
+
+
+def test_digest_tables_grouped_by_prefix_all(tmp_path):
+    _mkdb(
+        tmp_path / "d.db", ["fin_transactions", "fin_rules", "health_sleep", "accounts"]
+    )
+    _root, cfg = _repo(
+        tmp_path, '[integrations.sqlite]\npaths = ["d.db"]\n', {"a.md": "# A\n\nx\n"}
+    )
+    out = digest.build_digest(tmp_path, cfg)
+    assert "fin_* (2):" in out  # shared prefix grouped
+    assert "fin_transactions" in out and "fin_rules" in out
+    assert (
+        "accounts" in out and "health_sleep" in out
+    )  # unprefixed shown, not truncated
+
+
+def test_digest_full_tier(tmp_path):
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"money/a.md": "---\ndescription: the budget doc\n---\n# A\n\nx\n"},
+    )
+    out = digest.build_digest(tmp_path, cfg, full=True)
+    assert "money/a.md" in out and "the budget doc" in out  # per-doc note in --full
+
+
+def test_digest_degrades_no_db_no_frontmatter(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "# A\n\nno frontmatter\n", "sub/b.md": "# B\n\nx\n"}
+    )
+    out = digest.build_digest(tmp_path, cfg)
+    assert out.startswith("[repolens]")
+    assert "database" not in out  # no DB → no DB section
+    assert out.rstrip().endswith("rg")  # routing pointer still last
+
+
+def test_cmd_index_rebuild_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    _repo(tmp_path, "", {"a.md": "# A\n\nx\n"})
+    cli.main(["index", "--rebuild"])
+    assert "built index" in capsys.readouterr().out
+
+
+def test_cmd_digest_full_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    _repo(tmp_path, "", {"money/a.md": "---\ndescription: d\n---\n# A\n\nx\n"})
+    cli.main(["digest", "--full"])
+    assert "money/a.md" in capsys.readouterr().out

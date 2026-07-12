@@ -24,8 +24,9 @@ __all__ = ["ensure_fresh", "search"]
 # ═══════════════════════════════════════════════════════════════
 # ensure_fresh()
 # ═══════════════════════════════════════════════════════════════
-# Rebuild the index when missing/forced/stale. REPOLENS_FORCE (and
-# CI/--rebuild) always rebuild — mtime is a local fast-path only.
+# Keep the index current on the read path. Missing → full build;
+# REPOLENS_FORCE → full rebuild; otherwise an INCREMENTAL pass (re-index
+# only changed files). CI/--rebuild do the full backstop.
 # ═══════════════════════════════════════════════════════════════
 def ensure_fresh(root: pathlib.Path, config: dict, refresh: bool = True) -> str:
     import os
@@ -38,13 +39,11 @@ def ensure_fresh(root: pathlib.Path, config: dict, refresh: bool = True) -> str:
         _index.build(root, config)
         return "built (was missing)"
     if refresh:
-        try:
-            stale = _index.corpus_newer_than(root, config, idx.stat().st_mtime)
-        except OSError:
-            stale = True
-        if stale:
-            _index.build(root, config)
-            return "rebuilt (corpus changed)"
+        # Incremental: re-index only changed files (it stat-gates internally, so
+        # this is cheap when nothing changed). A full rebuild is --rebuild / forced.
+        changed, deleted, _ = _index.build_incremental(root, config)
+        if changed or deleted:
+            return f"incremental ({changed} changed, {deleted} removed)"
     return ""
 
 
