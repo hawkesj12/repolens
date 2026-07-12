@@ -16,6 +16,7 @@ import platform
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 __all__ = ["probe_env", "detect_stack"]
 
@@ -51,7 +52,7 @@ def _version(tool: str) -> str:
             [tool, "--version"],
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=1.5,
             check=False,
         )
         m = _VERSION_RE.search((r.stdout or "") + " " + (r.stderr or ""))
@@ -65,16 +66,20 @@ def _version(tool: str) -> str:
 # ═══════════════════════════════════════════════════════════════
 # One compact line: the OS + each PRESENT tool from config['env_tools']
 # (with a version when detectable, present-without-version otherwise).
-# Absent tools are omitted. Order follows the configured list.
+# Absent tools are omitted. Order follows the configured list. The
+# per-tool `--version` probes run CONCURRENTLY, so total wall-time is
+# bounded by the slowest single tool (a heavy one like streamlit), not
+# the sum — a SessionStart hook must stay fast regardless of list size.
 # ═══════════════════════════════════════════════════════════════
 def probe_env(config: dict) -> str:
     os_label = _OS.get(platform.system(), platform.system() or "unknown")
     rel = platform.release()
     parts = [f"{os_label} {rel}".strip()]
-    for tool in config.get("env_tools", []):
-        if shutil.which(tool):
-            ver = _version(tool)
-            parts.append(f"{tool} {ver}".strip())
+    present = [t for t in config.get("env_tools", []) if shutil.which(t)]
+    if present:
+        with ThreadPoolExecutor(max_workers=min(8, len(present))) as ex:
+            versions = ex.map(_version, present)  # order-preserving
+        parts += [f"{tool} {ver}".strip() for tool, ver in zip(present, versions)]
     return "[env] " + " · ".join(parts)
 
 

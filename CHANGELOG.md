@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-07-12
+
+### Changed
+
+- **`repolens env` now probes tool versions concurrently** — a SessionStart hook
+  must stay fast regardless of allowlist size. Sequential probing made total time
+  the _sum_ of every tool's `--version` (a heavy one like `streamlit`, or a tool
+  whose `--version` hangs to the timeout, dominated). Now the per-tool probes run
+  in a thread pool, so wall-time is bounded by the _slowest single_ tool, and the
+  per-probe timeout is tightened to 1.5s. Order is preserved.
+
 ## [0.4.2] — 2026-07-12
 
 ### Fixed
@@ -101,7 +112,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/hawkesj12/repolens/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/hawkesj12/repolens/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/hawkesj12/repolens/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hawkesj12/repolens/compare/v0.3.0...v0.4.0
