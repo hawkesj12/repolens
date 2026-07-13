@@ -8,6 +8,7 @@ repolens is intentionally small — "the agent-context freshness layer." These a
 - **v0.3 — the freshness layer.** `repolens digest` (a tiny, budgeted repo map for a SessionStart hook), `repolens env` (OS-aware, manifest-seeded, present-only toolchain probe), `repolens hook` (non-destructive SessionStart installer). Positioned as "detect + inject, don't hand-maintain."
 - **v0.4 — `.gitignore` respected by default.** The file corpus skips gitignored paths, so secrets/`.env`/build output stay out of the index; `include_gitignored = true` opts back in for personal-knowledge repos. DB schema discovery is unaffected (names only, opt-in).
 - **v0.5 — incremental indexing + schema-agnostic frontmatter + rich digest.** `index` re-indexes only changed files (content-hash, stat-gated, WAL upsert + delete-reconcile; `--rebuild` backstop). A sparse `frontmatter(relpath,key,value)` EAV makes any frontmatter key queryable — no schema imposed (a total, zero-dep flat parser). `digest` gets rich: folders-with-purpose + all DB tables grouped by prefix, tiered (`--full`) and budgeted.
+- **v0.6 — `repolens enrich` (bring your own model).** Generate `description`/`tags` frontmatter + code purpose lines with a local model (ollama by default, configurable). Fills-only (never clobbers), gitignore-respecting, stdlib HTTP (no dependency). The metadata that feeds `find`/`digest` writes itself.
 
 ## Later / maybe
 

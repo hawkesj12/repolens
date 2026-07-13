@@ -12,6 +12,7 @@ from . import (
     __version__,
     digest,
     discover,
+    enrich,
     env,
     find,
     hookgen,
@@ -172,6 +173,30 @@ def cmd_env(args) -> int:
     return 0
 
 
+def cmd_enrich(args) -> int:
+    r, cfg = _ctx()
+    docs, code = enrich.enrich_repo(
+        r,
+        cfg,
+        dry=args.dry,
+        force=args.force,
+        docs_only=args.docs_only,
+        code_only=args.code_only,
+    )
+    for line in docs + code:
+        print(f"  {'[dry] ' if args.dry else ''}{line}")
+    verb = "would enrich" if args.dry else "enriched"
+    print(
+        f"{verb}: {len(docs)} docs · {len(code)} code (model: {cfg['enrich']['model']})"
+    )
+    if not docs and not code:
+        print(
+            "  (nothing to fill — or no model server at "
+            f"{cfg['enrich']['endpoint']}; start ollama / set [enrich].endpoint)"
+        )
+    return 0
+
+
 def cmd_hook(args) -> int:
     r, _cfg = _ctx()
     with_env = not args.no_env
@@ -267,6 +292,18 @@ def main(argv=None) -> int:
         help="don't also run `repolens env` in the hook (env is on by default)",
     )
     p_hook.set_defaults(func=cmd_hook)
+
+    p_enrich = sub.add_parser(
+        "enrich",
+        help="generate description/tags frontmatter + code purpose lines (local model)",
+    )
+    p_enrich.add_argument("--dry", action="store_true", help="preview, write nothing")
+    p_enrich.add_argument(
+        "--force", action="store_true", help="regenerate even existing fields"
+    )
+    p_enrich.add_argument("--docs-only", action="store_true")
+    p_enrich.add_argument("--code-only", action="store_true")
+    p_enrich.set_defaults(func=cmd_enrich)
 
     args = ap.parse_args(argv)
     return args.func(args)

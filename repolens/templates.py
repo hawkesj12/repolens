@@ -41,6 +41,16 @@ DEFAULT_CONFIG = """\
 # ...). Edit freely — absence is the default, so only list what matters.
 # [env]
 # tools = ["git", "python", "node"]
+
+# `repolens enrich` — generate description/tags frontmatter (+ code purpose lines)
+# with a LOCAL model. BRING YOUR OWN MODEL: point `model` at anything your endpoint
+# serves (ollama by default). It only FILLS MISSING fields (never clobbers; --force
+# to regenerate) and writes to source files. This is the one command that needs a
+# model server; everything else is stdlib + offline.
+# [enrich]
+# model = "llama3.2"                                  # e.g. gemma2:9b, qwen2.5, ...
+# endpoint = "http://localhost:11434/api/generate"    # ollama's API shape
+# fields = ["description", "tags"]                     # add "domain" (from top dir) if you want it
 """
 
 

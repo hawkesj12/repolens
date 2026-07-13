@@ -153,6 +153,15 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         else list(DEFAULT_ENV_TOOLS)
     )
 
+    # `repolens enrich` — bring-your-own local model (ollama shape by default).
+    en = data.get("enrich", {})
+    en = en if isinstance(en, dict) else {}
+    enrich = {
+        "model": str(en.get("model", "llama3.2")),
+        "endpoint": str(en.get("endpoint", "http://localhost:11434/api/generate")),
+        "fields": list(en.get("fields", ["description", "tags"])),
+    }
+
     return {
         "root": root,
         "index_path": index_path,
@@ -163,4 +172,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "sqlite_paths": sqlite_paths,
         "env_tools": env_tools,
         "include_gitignored": include_gitignored,
+        "enrich": enrich,
     }

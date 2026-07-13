@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-12
+
+### Added
+
+- **`repolens enrich`** — generate `description` + `tags` frontmatter (and a
+  one-line purpose docstring/comment for code) with a **local model**, so the
+  metadata that powers `find`/`digest` writes itself. **Bring your own model:** a
+  `[enrich]` config block sets `model` (default `llama3.2`), `endpoint` (ollama's
+  `/api/generate` shape by default), and `fields` (default `["description","tags"]`;
+  add `"domain"`, derived from the top dir, if you want it). It talks to the model
+  over **stdlib HTTP** — no Python dependency, and `find`/`lint`/`index`/`digest`
+  never touch a model. This is the **one command that writes to your source files**:
+  it only FILLS MISSING fields (never clobbers; `--force` regenerates), respects
+  `.gitignore` (same walk as the indexer), and `--dry` previews. No model server →
+  a clear message, never a crash.
+
 ## [0.5.0] — 2026-07-12
 
 ### Added
@@ -142,7 +158,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hawkesj12/repolens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hawkesj12/repolens/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/hawkesj12/repolens/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/hawkesj12/repolens/compare/v0.4.1...v0.4.2

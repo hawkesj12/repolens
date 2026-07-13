@@ -11,6 +11,7 @@ from repolens import (
     cli,
     digest,
     discover,
+    enrich,
     env,
     find,
     frontmatter,
@@ -669,3 +670,72 @@ def test_cmd_digest_full_flag(tmp_path, monkeypatch, capsys):
     _repo(tmp_path, "", {"money/a.md": "---\ndescription: d\n---\n# A\n\nx\n"})
     cli.main(["digest", "--full"])
     assert "money/a.md" in capsys.readouterr().out
+
+
+# ── enrich (local-model metadata generation; model call mocked) ─
+def _fake_ask(config, prompt):
+    if "DESCRIPTION" in prompt:
+        return "DESCRIPTION: A test document about things.\nTAGS: Alpha, beta, gamma!"
+    return "Does a test thing quickly."
+
+
+def test_enrich_config_defaults(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    en = cfg["enrich"]
+    assert en["model"] == "llama3.2"
+    assert "11434" in en["endpoint"]
+    assert en["fields"] == ["description", "tags"]
+
+
+def test_enrich_fills_description_and_tags(tmp_path, monkeypatch):
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(tmp_path, "", {"notes/a.md": "# A\n\nbody\n"})
+    docs, _code = enrich.enrich_repo(tmp_path, cfg)
+    txt = (tmp_path / "notes/a.md").read_text()
+    assert "description: A test document about things." in txt
+    assert "tags: alpha, beta, gamma" in txt  # cleaned: lowercase, atomic, deduped
+    assert txt.startswith("---")  # frontmatter prepended
+
+
+def test_enrich_never_clobbers_without_force(tmp_path, monkeypatch):
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "---\ndescription: mine\n---\n# A\n\nx\n"}
+    )
+    enrich.enrich_repo(tmp_path, cfg)
+    txt = (tmp_path / "a.md").read_text()
+    assert "description: mine" in txt  # existing kept
+    assert "A test document" not in txt  # not clobbered
+    assert "tags:" in txt  # the missing field IS filled
+
+
+def test_enrich_code_shebang_safe(tmp_path, monkeypatch):
+    import ast as _ast
+
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(tmp_path, "", {"s.py": "#!/usr/bin/env python3\nx = 1\n"})
+    enrich.enrich_repo(tmp_path, cfg, code_only=True)
+    src = (tmp_path / "s.py").read_text()
+    lines = src.splitlines()
+    assert lines[0] == "#!/usr/bin/env python3"  # shebang stays line 1
+    assert lines[1].startswith('"""')  # docstring inserted after
+    _ast.parse(src)  # still valid Python
+
+
+def test_enrich_dry_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nx\n"})
+    before = (tmp_path / "a.md").read_text()
+    docs, _code = enrich.enrich_repo(tmp_path, cfg, dry=True)
+    assert docs and (tmp_path / "a.md").read_text() == before
+
+
+def test_enrich_domain_field_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path,
+        '[enrich]\nfields = ["description", "domain", "tags"]\n',
+        {"finances/a.md": "# A\n\nx\n"},
+    )
+    enrich.enrich_repo(tmp_path, cfg)
+    assert "domain: finances" in (tmp_path / "finances/a.md").read_text()

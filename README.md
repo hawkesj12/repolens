@@ -30,6 +30,9 @@ One line: the OS plus the **present** tools (with versions) from a config allowl
 **`repolens hook` — wire it in without clobbering anything.**
 Prints a SessionStart-hook snippet by default; `--install` **additively** merges it into your repo's `.claude/settings.json` (never overwrites an existing hook or key); `--check` dry-runs.
 
+**`repolens enrich` — let the metadata write itself (bring your own model).**
+Generates `description` + `tags` frontmatter (and a one-line purpose docstring for code) with a **local model**, so the metadata that powers `find`/`digest` isn't hand-typed. Point `[enrich].model` at anything your endpoint serves (ollama by default; default `llama3.2`). It only **fills missing** fields (never clobbers; `--force` regenerates), respects `.gitignore`, and `--dry` previews. It talks to the model over stdlib HTTP — no Python dependency — and it's the **one command that writes to your files**; everything else is read-only and offline.
+
 ## Who it's for
 
 A repo that mixes **prose/knowledge with code** and is worked by an **agent that greps on demand rather than maintaining a semantic index** — [Claude Code](https://claude.com/claude-code) being the prime example. There, `repolens` gives a _ranked, described_ answer across docs + code + data (and, when you opt in, your gitignored notes), plus lightweight enforced hygiene.
