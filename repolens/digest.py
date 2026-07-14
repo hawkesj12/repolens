@@ -140,9 +140,13 @@ def build_digest(
             for r in con.execute("SELECT relpath, title FROM docs WHERE kind='md'")
         }
         descs: dict[str, str] = {}
+        # honor a renamed description key so digest tracks enrich's schema
+        desc_key = (
+            config.get("enrich", {}).get("keys", {}).get("description", "description")
+        )
         try:
             for rel, val in con.execute(
-                "SELECT relpath, value FROM frontmatter WHERE key='description'"
+                "SELECT relpath, value FROM frontmatter WHERE key=?", (desc_key,)
             ):
                 descs[rel] = val
         except sqlite3.OperationalError:

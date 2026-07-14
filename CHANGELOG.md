@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-14
+
+### Fixed
+
+- **`enrich` no longer writes a bogus `domain` on repo-root files** — a file with
+  no parent dir (`CLAUDE.md`, `README.md`) has no domain, so the field is now
+  omitted instead of set to the filename (`domain: CLAUDE.md`).
+
+### Added
+
+- **`[enrich.keys]` — write into your own frontmatter schema.** Rename the output
+  field per kind (e.g. `description = "summary"`, `tags = "keywords"`), so `enrich`
+  fills a repo's _existing_ field names instead of imposing its own — and treats a
+  doc that already carries the renamed field as present (no duplicate). `digest`
+  reads the same renamed key for folder purposes. Defaults to the kind name, so
+  it's zero-config unless you need it.
+
 ## [0.6.0] — 2026-07-12
 
 ### Added
@@ -158,7 +175,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/hawkesj12/repolens/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/hawkesj12/repolens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hawkesj12/repolens/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/hawkesj12/repolens/compare/v0.4.2...v0.4.3

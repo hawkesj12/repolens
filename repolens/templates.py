@@ -51,6 +51,9 @@ DEFAULT_CONFIG = """\
 # model = "llama3.2"                                  # e.g. gemma2:9b, qwen2.5, ...
 # endpoint = "http://localhost:11434/api/generate"    # ollama's API shape
 # fields = ["description", "tags"]                     # add "domain" (from top dir) if you want it
+# [enrich.keys]                                        # write into YOUR schema's field names
+# description = "summary"                              # (default: the kind name)
+# tags = "keywords"
 """
 
 

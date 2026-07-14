@@ -98,7 +98,8 @@ def _gen_code(config: dict, text: str) -> str:
 
 
 def _domain(rel: str) -> str:
-    return rel.split("/")[0]
+    parts = rel.split("/")
+    return parts[0] if len(parts) > 1 else ""  # root-level file → no domain
 
 
 def _has_key(fm: str, key: str) -> bool:
@@ -115,7 +116,14 @@ def _has_key(fm: str, key: str) -> bool:
 def _enrich_doc(path, rel, config, fields, dry, force) -> str | None:
     text = path.read_text(errors="ignore")
     fm, body = frontmatter.split_frontmatter(text)
-    want = {f: (force or not _has_key(fm, f)) for f in fields}
+    keys = config.get("enrich", {}).get("keys", {})
+
+    def oname(kind: str) -> str:  # the OUTPUT field name for a kind (renamable)
+        return keys.get(kind, kind)
+
+    # "missing" is judged against the OUTPUT name — so a repo's own field (whatever
+    # it's renamed to) counts as present and isn't duplicated.
+    want = {kind: (force or not _has_key(fm, oname(kind))) for kind in fields}
     if not any(want.values()):
         return None
     desc = tags = ""
@@ -123,11 +131,11 @@ def _enrich_doc(path, rel, config, fields, dry, force) -> str | None:
         desc, tags = _gen_doc(config, text)
     parts = []
     if want.get("description") and desc:
-        parts.append(f"description: {desc}")
-    if want.get("domain"):
-        parts.append(f"domain: {_domain(rel)}")
+        parts.append(f"{oname('description')}: {desc}")
+    if want.get("domain") and (dom := _domain(rel)):
+        parts.append(f"{oname('domain')}: {dom}")
     if want.get("tags") and tags:
-        parts.append(f"tags: {tags}")
+        parts.append(f"{oname('tags')}: {tags}")
     if not parts:
         return None
     add = "".join(p + "\n" for p in parts)

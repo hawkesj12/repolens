@@ -154,12 +154,17 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     )
 
     # `repolens enrich` — bring-your-own local model (ollama shape by default).
+    # `keys` optionally renames the OUTPUT frontmatter field per kind, so enrich
+    # writes into a repo's own schema (e.g. description -> summary) instead of
+    # imposing its names. Defaults to the kind name.
     en = data.get("enrich", {})
     en = en if isinstance(en, dict) else {}
+    raw_keys = en.get("keys") if isinstance(en.get("keys"), dict) else {}
     enrich = {
         "model": str(en.get("model", "llama3.2")),
         "endpoint": str(en.get("endpoint", "http://localhost:11434/api/generate")),
         "fields": list(en.get("fields", ["description", "tags"])),
+        "keys": {k: str(v) for k, v in raw_keys.items() if isinstance(v, str)},
     }
 
     return {

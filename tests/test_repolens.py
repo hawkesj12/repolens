@@ -739,3 +739,45 @@ def test_enrich_domain_field_opt_in(tmp_path, monkeypatch):
     )
     enrich.enrich_repo(tmp_path, cfg)
     assert "domain: finances" in (tmp_path / "finances/a.md").read_text()
+
+
+def test_enrich_root_file_gets_no_domain(tmp_path, monkeypatch):
+    # a repo-root file has no parent dir → no domain (the v0.6.1 bug fix)
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path,
+        '[enrich]\nfields = ["description", "domain"]\n',
+        {"CLAUDE.md": "# C\n\nx\n"},
+    )
+    enrich.enrich_repo(tmp_path, cfg)
+    txt = (tmp_path / "CLAUDE.md").read_text()
+    assert "description:" in txt
+    assert "domain:" not in txt  # never "domain: CLAUDE.md"
+
+
+def test_enrich_renames_output_fields(tmp_path, monkeypatch):
+    # [enrich.keys] writes into the repo's own schema names
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path,
+        '[enrich]\nfields = ["description", "tags"]\n'
+        '[enrich.keys]\ndescription = "summary"\ntags = "keywords"\n',
+        {"a.md": "# A\n\nx\n"},
+    )
+    enrich.enrich_repo(tmp_path, cfg)
+    txt = (tmp_path / "a.md").read_text()
+    assert "summary: A test document" in txt and "keywords: alpha" in txt
+    assert "description:" not in txt and "tags:" not in txt  # imposed names not used
+
+
+def test_enrich_respects_existing_renamed_field(tmp_path, monkeypatch):
+    # a doc already carrying the renamed field is treated as present (not duplicated)
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path,
+        '[enrich]\nfields = ["description"]\n[enrich.keys]\ndescription = "summary"\n',
+        {"a.md": "---\nsummary: mine\n---\n# A\n\nx\n"},
+    )
+    docs, _c = enrich.enrich_repo(tmp_path, cfg)
+    assert not docs  # already has summary → nothing to fill
+    assert "summary: mine" in (tmp_path / "a.md").read_text()
