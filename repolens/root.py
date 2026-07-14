@@ -1,8 +1,10 @@
 """repolens.root — find the repo root and load its config.
 
 Portability keystone: no path is ever hardcoded. The repo root is the nearest
-ancestor containing `.repometa.toml` (the config marker), else `.git`, else a
-`__file__`-relative fallback. Config is parsed with stdlib tomllib (3.11+) and
+ancestor of the working directory containing `.repometa.toml` (the config
+marker), else `.git`, else the cwd itself. Resolution is anchored ONLY to the
+user's cwd (never the install location) so an editable / venv-in-repo install
+can't resolve the wrong repo. Config is parsed with stdlib tomllib (3.11+) and
 merged over sane generic defaults — so an unconfigured repo still works and no
 `private/`-style folder is ever assumed.
 """
@@ -59,22 +61,27 @@ DEFAULT_CODE_EXTS = {
 # and init found no manifests. Kept minimal — NOT an opinionated stack.
 DEFAULT_ENV_TOOLS = ["git", "python", "node"]
 
+# Files larger than this are skipped at index time — a guard against a stray
+# huge file (a generated dump, a vendored blob) bloating the disposable index
+# and reading unbounded bytes into memory. Config-overridable via max_file_bytes.
+DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024  # 5 MB
+
 __all__ = ["find_root", "load_config", "CONFIG_NAME"]
 
 
 # ═══════════════════════════════════════════════════════════════
 # find_root()
 # ═══════════════════════════════════════════════════════════════
-# Resolve the repo root: nearest ancestor of `start` (default cwd,
-# then this file) containing .repometa.toml, else .git, else a
-# __file__-relative fallback. No hardcoded paths.
+# Resolve the repo root: nearest ancestor of `start` (default the
+# cwd) containing .repometa.toml, else .git, else the cwd. Anchored
+# only to the user's location — NEVER __file__ (the install dir),
+# so an editable/venv-in-repo install can't resolve the wrong repo.
 # ═══════════════════════════════════════════════════════════════
 def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
     starts: list[pathlib.Path] = []
     if start is not None:
         starts.append(pathlib.Path(start).resolve())
     starts.append(pathlib.Path.cwd())
-    starts.append(pathlib.Path(__file__).resolve())
 
     for marker in (CONFIG_NAME, ".git"):
         for base in starts:
@@ -116,6 +123,7 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     # Respect .gitignore by DEFAULT — the file corpus skips gitignored paths
     # unless include_gitignored is set (opt-in for personal/knowledge repos).
     include_gitignored = bool(rl.get("include_gitignored", False))
+    max_file_bytes = int(rl.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES))
 
     types = {}
     for name, spec in (data.get("types") or {}).items():
@@ -178,5 +186,6 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "sqlite_paths": sqlite_paths,
         "env_tools": env_tools,
         "include_gitignored": include_gitignored,
+        "max_file_bytes": max_file_bytes,
         "enrich": enrich,
     }

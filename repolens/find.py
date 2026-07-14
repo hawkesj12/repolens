@@ -111,6 +111,24 @@ def search(config: dict, query: str, k: int = 8) -> list[dict]:
                     if "syntax error" in str(e).lower()
                     else []
                 )
+            # FTS5 whitespace = implicit AND, so a multi-word query needs EVERY
+            # term in one doc. On a zero-hit AND, broaden to any-term (OR) once
+            # rather than silently return nothing — announced on stderr.
+            terms = [t for t in re.split(r"\s+", query.strip()) if t]
+            if not rows and len(terms) > 1:
+                try:
+                    rows = con.execute(
+                        f"SELECT relpath, title, kind, {_WEIGHTS} AS score "
+                        "FROM docs WHERE docs MATCH ? ORDER BY score LIMIT ?",
+                        (" OR ".join(terms), k),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    rows = []
+                if rows:
+                    print(
+                        "⚠ no exact (all-term) match — broadened to any-term",
+                        file=sys.stderr,
+                    )
     finally:
         con.close()
     return [

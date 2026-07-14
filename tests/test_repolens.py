@@ -74,6 +74,24 @@ def test_load_config_defaults_and_parse(tmp_path):
     assert cfg["sqlite_paths"] == []  # integration off by default
 
 
+def test_find_root_ignores_install_dir(tmp_path, monkeypatch):
+    # A dir with .git but no .repometa.toml, entered as cwd, must resolve to
+    # ITSELF — never to the repolens install dir (the __file__ footgun). This
+    # is the panel's confirmed blocker: an editable/venv-in-repo install must
+    # not leak the wrong repo.
+    target = tmp_path / "otherrepo"
+    (target / ".git").mkdir(parents=True)
+    monkeypatch.chdir(target)
+    assert root.find_root() == target.resolve()
+
+
+def test_load_config_max_file_bytes(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["max_file_bytes"] == root.DEFAULT_MAX_FILE_BYTES  # default
+    _root, cfg = _repo(tmp_path, "[repolens]\nmax_file_bytes = 1024\n")
+    assert cfg["max_file_bytes"] == 1024  # override
+
+
 def test_load_config_sqlite_backward_compat_singular_path(tmp_path):
     _root, cfg = _repo(tmp_path, '[integrations.sqlite]\npath = "data/app.db"\n')
     assert cfg["sqlite_paths"] == [tmp_path / "data/app.db"]
@@ -174,6 +192,51 @@ def test_like_search_ranks_and_announces(tmp_path, capsys):
     hits = find.search(cfg, "garmin ingest", 5)
     assert hits[0]["relpath"] == "b.md"  # 2 terms > 1
     assert "FTS5 unavailable" in capsys.readouterr().err
+
+
+def test_fts5_ranks_path_title_hit_first(tmp_path):
+    # The headline claim: a file whose PATH/title carries the term outranks one
+    # where the term is only in the body. Pins bm25 ORDER on the real FTS5 path
+    # (existing tests only assert membership; the one order test is on LIKE).
+    if not index.has_fts5():
+        return  # FTS5-less sqlite build → skip (LIKE order is tested separately)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "garmin.md": "# unrelated\n\nplain prose with no query terms here\n",
+            "notes.md": "# notes\n\nthis body merely mentions garmin once\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    hits = find.search(cfg, "garmin")
+    assert hits[0]["relpath"] == "garmin.md"  # path hit beats a body-only hit
+
+
+def test_fts5_porter_stemming(tmp_path):
+    # porter tokenizer: querying "ranking" finds a doc that says "ranked".
+    if not index.has_fts5():
+        return
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nresults are ranked by score\n"})
+    index.build(tmp_path, cfg)
+    assert any(h["relpath"] == "a.md" for h in find.search(cfg, "ranking"))
+
+
+def test_fts5_broadens_to_or_on_zero_and_hits(tmp_path, capsys):
+    # Multi-word FTS5 is implicit-AND; on a zero all-term match, broaden to
+    # any-term (OR) and announce it, rather than silently returning nothing.
+    if not index.has_fts5():
+        return
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"a.md": "# A\n\nonly garmin here\n", "b.md": "# B\n\nonly deploy here\n"},
+    )
+    index.build(tmp_path, cfg)
+    hits = find.search(cfg, "garmin deploy")  # no single doc has both
+    rels = {h["relpath"] for h in hits}
+    assert rels == {"a.md", "b.md"}  # broadened OR found both
+    assert "broadened to any-term" in capsys.readouterr().err
 
 
 def test_ensure_fresh_force(tmp_path, monkeypatch):
@@ -497,6 +560,52 @@ def test_index_all_when_not_a_git_repo(tmp_path):
     md = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
     con.close()
     assert "a.md" in md  # not a git repo → no gitignore to respect
+
+
+def test_warns_when_gitignore_unenforced_outside_git(tmp_path, capsys):
+    # A .gitignore in a non-git dir is NOT honored — warn loudly so a user
+    # can't trust a boundary that isn't enforced (panel security finding).
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\np\n", ".gitignore": "secret\n"})
+    index.build(tmp_path, cfg)
+    assert ".gitignore is NOT enforced" in capsys.readouterr().err
+
+
+def test_no_warn_when_no_gitignore_outside_git(tmp_path, capsys):
+    # No .gitignore → nothing to enforce → no noise.
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\np\n"})
+    index.build(tmp_path, cfg)
+    assert ".gitignore is NOT enforced" not in capsys.readouterr().err
+
+
+def test_index_skips_symlinks(tmp_path):
+    # A file symlink must never be followed out of the repo — else a link to
+    # /etc/passwd or ~/.ssh/id_rsa lands in an agent's context (panel security).
+    outside = tmp_path.parent / "outside_secret.md"
+    outside.write_text("# secret\n\nleaked_via_symlink token\n")
+    _root, cfg = _repo(tmp_path, "", {"real.md": "# real\n\nlegit body\n"})
+    (tmp_path / "link.md").symlink_to(outside)
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rels = {r[0] for r in con.execute("SELECT relpath FROM docs")}
+    con.close()
+    assert "real.md" in rels
+    assert "link.md" not in rels  # symlink skipped
+    assert not any(h["relpath"] == "link.md" for h in find.search(cfg, "leaked"))
+
+
+def test_index_skips_oversized_file(tmp_path):
+    # A file above max_file_bytes is skipped (unbounded-read / bloat guard).
+    _root, cfg = _repo(
+        tmp_path,
+        "[repolens]\nmax_file_bytes = 64\n",
+        {"small.md": "# s\n\ntiny\n", "big.md": "# big\n\n" + "x " * 100 + "\n"},
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rels = {r[0] for r in con.execute("SELECT relpath FROM docs")}
+    con.close()
+    assert "small.md" in rels
+    assert "big.md" not in rels  # over the 64-byte cap → skipped
 
 
 # ── frontmatter parser (total, stdlib) ─────────────────────────

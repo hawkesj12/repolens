@@ -15,7 +15,7 @@ Builds a local SQLite (FTS5) index and answers ranked queries with a one-line de
 - **Code / config** — indexed by each file's _purpose line_ (from its docstring or leading comment), so `repolens find "garmin ingest"` returns `scripts/ingest_garmin.py — "Pulls Garmin biometrics into the DB"`, not a wall of matches.
 - **Database tables** _(optional)_ — table + column names, so "where do trades live" resolves to a DB table.
 - **Frontmatter — any keys, schema-free.** Every YAML frontmatter key is indexed into a sparse `frontmatter(relpath, key, value)` table, so docs with _different_ conventions (`paths:`, `name/description:`, `sector:`) coexist in one repo — repolens imposes no schema and clobbers none. A total, dependency-free parser degrades nested/exotic YAML to searchable text.
-- **Respects `.gitignore` by default** — so secrets, `.env`, and anything you ignore stay out of the index. Opt into `include_gitignored` when you _want_ gitignored notes searchable (a personal-knowledge-repo mode). Ranks with **BM25** (degrading to a plain `LIKE` search — with a visible warning — if your SQLite lacks FTS5).
+- **Respects `.gitignore` by default (in a git repo)** — so secrets, `.env`, and anything you ignore stay out of the index. Enforcement uses `git`, so in a **non-git** directory a `.gitignore` can't be honored — repolens indexes everything there and **prints a warning** so you're never silently exposed. Opt into `include_gitignored` when you _want_ gitignored notes searchable (a personal-knowledge-repo mode). Ranks with **BM25** (degrading to a plain `LIKE` search — with a visible warning — if your SQLite lacks FTS5).
 - The index is a **disposable, gitignored cache**: it updates **incrementally** (only changed files, by content hash) and can't drift. `repolens index --rebuild` is the full backstop; delete it and it regenerates.
 
 **`repolens lint` — keep the knowledge base honest.**
@@ -42,7 +42,7 @@ A repo that mixes **prose/knowledge with code** and is worked by an **agent that
 
 ## What it's _not_
 
-Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a semantic/embeddings index like Cursor or Aider's repo-map, not a RAG system, and not a knowledge-management app. It's a lexical findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code purpose-lines, and DB schema — and keeps it clean. It **respects `.gitignore` by default**; opt into `include_gitignored` when you want your ignored notes searchable too.
+Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a semantic/embeddings index like Cursor or Aider's repo-map, not a RAG system, and not a knowledge-management app. It's a lexical findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code purpose-lines, and DB schema — and keeps it clean. It **respects `.gitignore` by default in a git repo** (a non-git directory can't enforce it, and repolens warns when that happens); opt into `include_gitignored` when you want your ignored notes searchable too.
 
 ### When to use `repolens find` vs `rg`
 
@@ -52,6 +52,8 @@ Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code sear
 - **`repolens find`** → _"where does X live / which file handles Y"_ — you want the _right few_ files, ranked and described, across docs + code purpose-lines + DB schema (plus your gitignored notes, when you opt in).
 
 repolens is **lexical (BM25)**, not embeddings — deliberately: for code, lexical ranking often beats dense retrieval and costs nothing.
+
+**Two things worth knowing about matching.** A multi-word query is **all-terms** (every word must appear in the same file); if that returns nothing, repolens automatically **broadens to any-term** and tells you on stderr — so `find "garmin deploy"` still surfaces the closest files even when no single doc has both words. And matching is **stemmed** (`ranking` finds `ranked`) but does **not** split identifiers — search `parse` or `frontmatter`, not `parseFrontmatter`, to match a `camelCase`/`snake_case` name.
 
 ## Install
 

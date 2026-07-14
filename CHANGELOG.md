@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-14
+
+Hardening pass from an independent three-lens review, ahead of a PyPI release.
+
+### Fixed
+
+- **Root resolution no longer leaks the wrong repo (blocker).** `find_root()` was
+  anchored partly to the install location (`__file__`), so an editable / venv-in-repo
+  install could resolve, index, search — and, via `enrich`, **write to** — a different
+  repo than your working directory. Resolution is now anchored only to your cwd (or an
+  explicit start path). Safe to `pip install` however you like, not just via `pipx`.
+
+### Security
+
+- **`.gitignore` boundary is honest outside a git repo.** Ignore rules are enforced via
+  `git`, so in a **non-git** directory a `.gitignore` was silently not honored. repolens
+  now prints a clear stderr warning when it indexes a non-git directory that has a
+  `.gitignore`, instead of exposing ignored files without notice.
+- **Symlinks are no longer followed out of the repo.** A file symlink (e.g. to
+  `/etc/passwd` or `~/.ssh/id_rsa`) was read and indexed — a real leak for a tool that
+  feeds an agent's context. Symlinked files are now skipped during indexing.
+
+### Added
+
+- **`max_file_bytes` (default 5 MB).** Files larger than the cap are skipped at index
+  time, guarding against a stray huge file (a generated dump, a vendored blob) bloating
+  the disposable index and reading unbounded bytes into memory. Config-overridable.
+
+### Changed
+
+- **Stemmed search.** The FTS5 index now uses the `porter unicode61` tokenizer, so
+  `find "ranking"` matches a file whose text says `ranked`. (Identifiers aren't split —
+  search `parse`, not `parseFrontmatter`.) Run `repolens index --rebuild` once to pick up
+  stemming on an existing index.
+- **Any-term broaden on a zero all-term match.** A multi-word `find` is implicit-AND
+  (every term must appear in one file); when that yields nothing, repolens now retries as
+  any-term (OR) and says so on stderr, instead of silently returning no hits.
+
 ## [0.7.2] — 2026-07-14
 
 ### Fixed

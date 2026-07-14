@@ -19,6 +19,7 @@ import os
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import time
 
 from . import frontmatter, purpose
@@ -38,7 +39,10 @@ def _first_heading(text: str) -> str:
 # untracked-but-not-ignored), via `git ls-files -co --exclude-standard`.
 # Returns None when include_gitignored is set, or the root isn't a git
 # repo / git is missing — meaning "no gitignore to respect, index all".
-# Memoized on config so a build's ~4 walks share one git call.
+# Memoized on config so a build's ~4 walks share one git call. When the
+# git call fails but a .gitignore EXISTS, warn once on stderr — the
+# ignore rules are NOT being honored, a real leak surface for a tool
+# that feeds an agent's context.
 # ═══════════════════════════════════════════════════════════════
 def _not_ignored(root: pathlib.Path, config: dict):
     if config.get("include_gitignored"):
@@ -57,6 +61,12 @@ def _not_ignored(root: pathlib.Path, config: dict):
         result = {ln for ln in out.stdout.splitlines() if ln}
     except (OSError, subprocess.SubprocessError):
         result = None  # not a git repo / git missing → index everything
+        if (root / ".gitignore").exists():
+            print(
+                "⚠ not a git repo — .gitignore is NOT enforced; all files indexed "
+                "(set include_gitignored=true to silence, or run inside a git repo)",
+                file=sys.stderr,
+            )
     config["_not_ignored_cache"] = result
     return result
 
@@ -71,6 +81,8 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
             is_code = os.path.splitext(fn)[1].lower() in exts
             if (code and is_code) or (not code and fn.endswith(".md")):
                 p = pathlib.Path(dp) / fn
+                if p.is_symlink():
+                    continue  # never follow a symlink out of the repo (leak surface)
                 rel = str(p.relative_to(root))
                 if rel in skip_files:
                     continue
@@ -156,8 +168,11 @@ def _db_sig(config: dict) -> str:
 # ═══════════════════════════════════════════════════════════════
 def _create_schema(con: sqlite3.Connection) -> None:
     if has_fts5():
+        # porter stemming so `find "ranking"` matches "ranked" — closes a real
+        # recall gap. (Won't split identifiers; camelCase/snake_case stays literal.)
         con.execute(
-            "CREATE VIRTUAL TABLE docs USING fts5(relpath, title, frontmatter, body, kind UNINDEXED)"
+            "CREATE VIRTUAL TABLE docs USING fts5(relpath, title, frontmatter, body, "
+            'kind UNINDEXED, tokenize="porter unicode61")'
         )
     else:
         con.execute("CREATE TABLE docs (relpath, title, frontmatter, body, kind)")
@@ -175,12 +190,20 @@ def _create_schema(con: sqlite3.Connection) -> None:
 # ═══════════════════════════════════════════════════════════════
 # Index one file into `docs` (+ frontmatter EAV rows for markdown).
 # Caller owns the `files` bookkeeping row. Returns True if indexed.
+# Files larger than max_bytes are skipped (unbounded-read / index-bloat
+# guard) — 0 means no cap.
 # ═══════════════════════════════════════════════════════════════
 def _insert_doc(
-    con: sqlite3.Connection, root: pathlib.Path, p: pathlib.Path, is_code: bool
+    con: sqlite3.Connection,
+    root: pathlib.Path,
+    p: pathlib.Path,
+    is_code: bool,
+    max_bytes: int = 0,
 ) -> bool:
     rel = str(p.relative_to(root))
     try:
+        if max_bytes and p.stat().st_size > max_bytes:
+            return False  # too large — skip (see max_file_bytes)
         text = p.read_text(errors="ignore")
     except Exception:
         return False
@@ -259,9 +282,10 @@ def build(
     _create_schema(con)
 
     n = code = 0
+    max_bytes = config.get("max_file_bytes", 0)
     for is_code in (False, True):
         for p in _walk(root, config, code=is_code):
-            if not _insert_doc(con, root, p, is_code):
+            if not _insert_doc(con, root, p, is_code, max_bytes):
                 continue
             try:
                 size, mtime = _stat(p)
@@ -312,6 +336,7 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
         return n + code + tables, 0, (time.time() - t0) * 1000
 
     changed = deleted = 0
+    max_bytes = config.get("max_file_bytes", 0)
     con.execute("BEGIN")
     stored = {
         r[0]: (r[1], r[2], r[3])
@@ -337,7 +362,7 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
                 continue
             con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
             con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
-            if _insert_doc(con, root, p, is_code):
+            if _insert_doc(con, root, p, is_code, max_bytes):
                 con.execute(
                     "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
                     (rel, size, mtime, h),
