@@ -113,6 +113,28 @@ The install is **non-destructive** — it merges into your existing hooks, never
 
 > The `digest`/`env` output is **local agent context** — repo/tool _names_ and versions, never file contents or secrets. It's for your agent, not a shareable artifact.
 
+## Keep enrichment fresh (schedule it)
+
+`enrich` is **fill-only** — it writes a `description`/`tags` only where one is missing. So running it on a schedule means every _new_ doc gets described automatically, and nothing you hand-wrote is ever touched. repolens ships the command; **you wire the trigger** — one line in whatever scheduler your OS already has. A nightly run is plenty (search itself never goes stale — the index re-reads changed files on every `find`; only the one-line summary lags, and only until the next run).
+
+**macOS (launchd)** — or just add the line to a script a `launchd` job already runs:
+
+```sh
+# in your nightly job, after your own work:
+cd /path/to/repo && repolens enrich
+```
+
+**Linux (cron)** — `crontab -e`, then:
+
+```cron
+# 04:10 nightly — describe any new docs. PATH so cron finds repolens + your model CLI.
+10 4 * * *  cd /path/to/repo && PATH="$HOME/.local/bin:$PATH" repolens enrich >> /tmp/repolens-enrich.log 2>&1
+```
+
+That's the whole self-maintaining loop — no daemon, no file-watcher, no dependency. If a run is missed (laptop asleep, model server down), the next one just picks up whatever's still undescribed; it can't drift. When you _rewrite_ a doc enough that its summary is stale, refresh that one deliberately: `repolens enrich --force path/to/doc.md`.
+
+> This is why `enrich` needs no `--watch` or OS file-events: a scheduled pass acting on _current state_ self-heals a missed run, where an on-save hook would silently drop it. Cheap detection, expensive work out of the hot path, triggered on your clock.
+
 ## How it works
 
 The index (`.repometa/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
