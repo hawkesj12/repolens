@@ -33,6 +33,9 @@ Prints a SessionStart-hook snippet by default; `--install` **additively** merges
 **`repolens enrich` — let the metadata write itself (bring your own model).**
 Generates `description` + `tags` frontmatter (and a one-line purpose docstring for code) with a **local model**, so the metadata that powers `find`/`digest` isn't hand-typed. Point `[enrich].model` at anything your endpoint serves (ollama by default; default `llama3.2`). It only **fills missing** fields (never clobbers; `--force` regenerates), respects `.gitignore`, and `--dry` previews. It talks to the model over stdlib HTTP — no Python dependency — and it's the **one command that writes to your files**; everything else is read-only and offline.
 
+**`repolens rule` — teach the agent to use repolens.**
+A search tool the agent doesn't know to reach for is dead weight. `rule` writes a short routing instruction ("concept → `repolens find`; exact string → `rg`") where an agent actually reads it — `.claude/rules/repolens.md` (auto-loads every session in Claude Code) or `AGENTS.md` at the root. Non-destructive (skips if present, appends to an existing `AGENTS.md`); `init` installs it by default in a Claude Code repo.
+
 ## Who it's for
 
 A repo that mixes **prose/knowledge with code** and is worked by an **agent that greps on demand rather than maintaining a semantic index** — [Claude Code](https://claude.com/claude-code) being the prime example. There, `repolens` gives a _ranked, described_ answer across docs + code + data (and, when you opt in, your gitignored notes), plus lightweight enforced hygiene.

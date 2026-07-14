@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-14
+
+### Added
+
+- **`repolens rule` — teach the agent to _use_ repolens.** A search tool the agent
+  doesn't know to reach for is dead weight; repolens shipped the capability but never
+  the instruction. `rule` writes a short routing rule ("concept → `repolens find`;
+  exact string → `rg`") where an agent actually reads it: `.claude/rules/repolens.md`
+  (auto-loads every session in Claude Code) or `AGENTS.md` at the repo root (the
+  cross-agent convention). Idempotent + **non-destructive** — skips if already
+  present, appends to an existing `AGENTS.md`, never clobbers. `repolens init`
+  installs it by default in a Claude Code repo (`--no-rule` opts out); `rule --check`
+  dry-runs. This is the missing instruction half of the tool.
+
 ## [0.6.1] — 2026-07-14
 
 ### Fixed
@@ -175,7 +189,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hawkesj12/repolens/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/hawkesj12/repolens/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/hawkesj12/repolens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hawkesj12/repolens/compare/v0.4.3...v0.5.0

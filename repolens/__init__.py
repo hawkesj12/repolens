@@ -9,7 +9,7 @@ semantic index. Stdlib-only.
 
 from __future__ import annotations
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 # Bumped when the config or type-schema shape changes.
 SCHEMA_VERSION = "1.2"

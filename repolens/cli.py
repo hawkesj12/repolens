@@ -19,6 +19,7 @@ from . import (
     index,
     lint,
     root,
+    ruledoc,
     templates,
 )
 
@@ -93,6 +94,18 @@ def cmd_init(args) -> int:
             print(
                 "(no .claude/ — skipped the SessionStart digest hook; "
                 "run `repolens hook --install` if you use Claude Code)"
+            )
+
+    # Agent instruction rule — TEACH the agent to use repolens (concept -> find).
+    # Auto-written in a Claude Code repo (an auto-loading rule); elsewhere an opt-in
+    # AGENTS.md via `repolens rule --install`. --no-rule opts out.
+    if not args.no_rule:
+        if (r / ".claude").is_dir():
+            print(ruledoc.install(r))
+        else:
+            print(
+                "(no .claude/ — skipped the agent rule; "
+                "run `repolens rule --install` to add an AGENTS.md instruction)"
             )
     print('repolens initialized. Run `repolens index` then `repolens find "..."`.')
     return 0
@@ -207,6 +220,15 @@ def cmd_hook(args) -> int:
     return 0
 
 
+def cmd_rule(args) -> int:
+    r, _cfg = _ctx()
+    if args.install or args.check:
+        print(ruledoc.install(r, check=args.check))
+    else:
+        print(ruledoc.snippet())
+    return 0
+
+
 # ═══════════════════════════════════════════════════════════════
 # main()
 # ═══════════════════════════════════════════════════════════════
@@ -229,6 +251,11 @@ def main(argv=None) -> int:
         "--no-hook",
         action="store_true",
         help="don't install the SessionStart digest/env hook (auto-installed in Claude Code repos)",
+    )
+    p_init.add_argument(
+        "--no-rule",
+        action="store_true",
+        help="don't install the agent instruction rule (auto-installed in Claude Code repos)",
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -304,6 +331,20 @@ def main(argv=None) -> int:
     p_enrich.add_argument("--docs-only", action="store_true")
     p_enrich.add_argument("--code-only", action="store_true")
     p_enrich.set_defaults(func=cmd_enrich)
+
+    p_rule = sub.add_parser(
+        "rule",
+        help="print (or --install) an agent instruction rule (how to use repolens)",
+    )
+    p_rule.add_argument(
+        "--install",
+        action="store_true",
+        help="write it to .claude/rules/repolens.md or AGENTS.md (non-destructive)",
+    )
+    p_rule.add_argument(
+        "--check", action="store_true", help="dry-run: show what --install would write"
+    )
+    p_rule.set_defaults(func=cmd_rule)
 
     args = ap.parse_args(argv)
     return args.func(args)

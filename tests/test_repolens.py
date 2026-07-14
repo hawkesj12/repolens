@@ -20,7 +20,9 @@ from repolens import (
     lint,
     purpose,
     root,
+    ruledoc,
     schema,
+    templates,
 )
 
 
@@ -781,3 +783,54 @@ def test_enrich_respects_existing_renamed_field(tmp_path, monkeypatch):
     docs, _c = enrich.enrich_repo(tmp_path, cfg)
     assert not docs  # already has summary → nothing to fill
     assert "summary: mine" in (tmp_path / "a.md").read_text()
+
+
+# ── rule (the agent instruction doc — teach the agent to use find) ─
+def test_rule_snippet_teaches_routing():
+    s = ruledoc.snippet()
+    assert templates.RULE_MARKER in s
+    assert "repolens find" in s and "rg" in s
+
+
+def test_rule_install_claude_repo_writes_dedicated_rule(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    ruledoc.install(tmp_path)
+    p = tmp_path / ".claude" / "rules" / "repolens.md"
+    assert p.is_file() and templates.RULE_MARKER in p.read_text()
+
+
+def test_rule_install_agents_md_when_no_claude(tmp_path):
+    ruledoc.install(tmp_path)
+    p = tmp_path / "AGENTS.md"
+    assert p.is_file() and "repolens find" in p.read_text()
+
+
+def test_rule_install_idempotent(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    ruledoc.install(tmp_path)
+    p = tmp_path / ".claude" / "rules" / "repolens.md"
+    before = p.read_text()
+    assert "already present" in ruledoc.install(tmp_path)
+    assert p.read_text() == before  # no duplicate
+
+
+def test_rule_appends_to_existing_agents_md(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# My agents\n\nexisting guidance\n")
+    ruledoc.install(tmp_path)
+    txt = (tmp_path / "AGENTS.md").read_text()
+    assert "existing guidance" in txt  # preserved, not clobbered
+    assert templates.RULE_MARKER in txt  # ours appended
+
+
+def test_cmd_init_installs_rule_in_claude_repo(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    cli.main(["init", "--no-hook"])  # rule installs even with hook off
+    assert (tmp_path / ".claude" / "rules" / "repolens.md").is_file()
+
+
+def test_cmd_init_no_rule_skips(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    cli.main(["init", "--no-hook", "--no-rule"])
+    assert not (tmp_path / ".claude" / "rules" / "repolens.md").exists()

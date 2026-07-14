@@ -100,3 +100,47 @@ repolens lint --strict || {
 }
 exit 0
 """
+
+
+# The instruction doc that TEACHES an agent to use repolens — the missing half:
+# tools are useless if the agent doesn't know to reach for them. Written by
+# `repolens rule --install` (and `init`) to .claude/rules/repolens.md (auto-loads
+# in Claude Code) or AGENTS.md. Deliberately short — it loads every session.
+RULE_MARKER = "<!-- repolens:rule -->"
+RULE_DOC = f"""\
+{RULE_MARKER}
+# Using repolens in this repo
+
+This repo is indexed by **repolens** — ranked search + hygiene over its docs, code
+purpose-lines, and DB schema. The index self-refreshes, so results are always current.
+
+- **`repolens find "<what you're after>"`** — when you know the _concept_ but not the
+  file ("where does X live", "which file handles Y"). Returns the right few files,
+  ranked and described — reach for this before reading around or broad-grepping.
+- **`rg` / grep** — when you already know the exact string, or need _every_ match.
+- **`repolens lint`** — corpus hygiene (dead links, malformed frontmatter) before a commit.
+
+Routing rule: **concept → `repolens find`; exact string → `rg`.** (repolens is lexical/BM25.)
+"""
+
+
+# The instruction doc that TEACHES an agent to use repolens — the missing half:
+# tools are useless if the agent doesn't know to reach for them. Written by
+# `repolens rule --install` (and `init`) to .claude/rules/repolens.md (auto-loads
+# in Claude Code) or AGENTS.md. Deliberately short — it loads every session.
+RULE_MARKER = "<!-- repolens:rule -->"
+RULE_DOC = f"""\
+{RULE_MARKER}
+# Using repolens in this repo
+
+This repo is indexed by **repolens** — ranked search + hygiene over its docs, code
+purpose-lines, and DB schema. The index self-refreshes, so results are always current.
+
+- **`repolens find "<what you're after>"`** — when you know the _concept_ but not the
+  file ("where does X live", "which file handles Y"). Returns the right few files,
+  ranked and described — reach for this before reading around or broad-grepping.
+- **`rg` / grep** — when you already know the exact string, or need _every_ match.
+- **`repolens lint`** — corpus hygiene (dead links, malformed frontmatter) before a commit.
+
+Routing rule: **concept → `repolens find`; exact string → `rg`.** (repolens is lexical/BM25.)
+"""
