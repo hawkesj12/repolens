@@ -1,14 +1,18 @@
 """repolens.enrich — generate frontmatter (description + tags) and code purpose
-lines with a LOCAL model. The one command that WRITES to your source files.
+lines with a model. The one command that WRITES to your source files.
 
-Bring-your-own-model: it POSTs to a local model server (ollama by default) over
-plain stdlib HTTP — no Python dependency, and `find`/`lint`/`index`/`digest` never
-touch a model. Configure `[enrich]` (`model`, `endpoint`, `fields`); if no server is
-running it degrades to a clear error, never a crash.
+Bring-your-own-model, two providers (stdlib-only, no Python dependency):
+  • HTTP — POST to a local server (ollama `/api/generate` by default): `model` + `endpoint`.
+  • COMMAND — run any CLI that reads the prompt on stdin and prints the answer, e.g.
+    `command = "claude -p --model haiku"` (runs on your Claude subscription — no API
+    key, compute off your machine). Takes precedence when set.
+`find`/`lint`/`index`/`digest` never touch a model; if none is reachable enrich
+degrades to a clear message, never a crash.
 
-Discipline: it only FILLS MISSING fields — never clobbers a hand-written description
-or docstring (use `--force` to regenerate). It respects `.gitignore` (same walk as
-the indexer), so it enriches only committable files. Generation is local + free.
+Discipline: it only FILLS MISSING fields — never clobbers a hand-written value, and
+`--force` regenerates the managed fields while PRESERVING a doc's other frontmatter
+keys. It respects `.gitignore` (same walk as the indexer), enriching only committable
+files. `--dry` previews.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
 import urllib.request
 
 from . import frontmatter
@@ -35,6 +40,24 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 # ═══════════════════════════════════════════════════════════════
 def _ask(config: dict, prompt: str) -> str:
     en = config.get("enrich", {})
+    # COMMAND provider: run any CLI that takes the prompt on stdin and prints the
+    # answer — e.g. `claude -p --model haiku` (runs on your Claude subscription, no
+    # API key, compute off your machine). Takes precedence over the HTTP endpoint.
+    cmd = en.get("command")
+    if cmd:
+        try:
+            r = subprocess.run(
+                cmd,
+                shell=True,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            return r.stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    # HTTP provider (ollama /api/generate shape) — the default.
     payload = json.dumps(
         {"model": en.get("model", "llama3.2"), "prompt": prompt, "stream": False}
     ).encode()
@@ -138,11 +161,19 @@ def _enrich_doc(path, rel, config, fields, dry, force) -> str | None:
         parts.append(f"{oname('tags')}: {tags}")
     if not parts:
         return None
-    add = "".join(p + "\n" for p in parts)
-    if fm and not force:
-        new = f"---\n{fm.rstrip(chr(10))}\n{add}---\n{body}"
-    else:  # no frontmatter, or force → fresh block prepended
-        new = f"---\n{add}---\n{body if fm else chr(10) + text}"
+    # Merge: keep every existing frontmatter line EXCEPT the keys we're (re)writing,
+    # then append the fresh ones. So --force regenerates our fields WITHOUT dropping
+    # a doc's other frontmatter keys, and fills-missing keeps what's there.
+    written = {p.split(":", 1)[0].strip() for p in parts}
+    if fm:
+        kept = [
+            ln
+            for ln in fm.splitlines()
+            if ln.strip() and ln.split(":", 1)[0].strip() not in written
+        ]
+        new = "---\n" + "\n".join([*kept, *parts]) + f"\n---\n{body}"
+    else:
+        new = "---\n" + "".join(p + "\n" for p in parts) + f"---\n{chr(10)}{text}"
     if not dry:
         path.write_text(new)
     return f"{rel} → {desc or 'tags: ' + tags}"

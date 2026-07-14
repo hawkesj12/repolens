@@ -785,6 +785,38 @@ def test_enrich_respects_existing_renamed_field(tmp_path, monkeypatch):
     assert "summary: mine" in (tmp_path / "a.md").read_text()
 
 
+def test_enrich_command_provider(tmp_path):
+    # a command provider (any CLI on stdin) is used instead of HTTP
+    fake = tmp_path / "m.sh"
+    fake.write_text(
+        "#!/bin/sh\ncat >/dev/null\nprintf 'DESCRIPTION: cmd doc.\\nTAGS: alpha, beta\\n'\n"
+    )
+    fake.chmod(0o755)
+    doc = tmp_path / "a.md"
+    doc.write_text("# A\n\nx\n")
+    cfg = {"enrich": {"command": f"sh {fake}", "keys": {}}}
+    enrich._enrich_doc(
+        doc, "a.md", cfg, ["description", "tags"], dry=False, force=False
+    )
+    txt = doc.read_text()
+    assert "description: cmd doc." in txt and "tags: alpha, beta" in txt
+
+
+def test_enrich_force_preserves_other_keys(tmp_path, monkeypatch):
+    # --force regenerates our fields but must NOT drop a doc's other frontmatter
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(
+        tmp_path,
+        '[enrich]\nfields = ["description"]\n',
+        {"a.md": "---\nid: 42\ndescription: old\n---\n# A\n\nx\n"},
+    )
+    enrich.enrich_repo(tmp_path, cfg, force=True)
+    txt = (tmp_path / "a.md").read_text()
+    assert "id: 42" in txt  # non-managed key preserved
+    assert "description: A test document" in txt  # regenerated
+    assert "description: old" not in txt  # old value replaced
+
+
 # ── rule (the agent instruction doc — teach the agent to use find) ─
 def test_rule_snippet_teaches_routing():
     s = ruledoc.snippet()

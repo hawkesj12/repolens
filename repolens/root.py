@@ -163,6 +163,7 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     enrich = {
         "model": str(en.get("model", "llama3.2")),
         "endpoint": str(en.get("endpoint", "http://localhost:11434/api/generate")),
+        "command": str(en["command"]) if en.get("command") else "",
         "fields": list(en.get("fields", ["description", "tags"])),
         "keys": {k: str(v) for k, v in raw_keys.items() if isinstance(v, str)},
     }

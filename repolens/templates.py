@@ -50,6 +50,10 @@ DEFAULT_CONFIG = """\
 # [enrich]
 # model = "llama3.2"                                  # e.g. gemma2:9b, qwen2.5, ...
 # endpoint = "http://localhost:11434/api/generate"    # ollama's API shape
+# command = "claude -p --model haiku"                 # OR: any CLI that takes the prompt
+#                                                     # on stdin + prints the answer (takes
+#                                                     # precedence; runs on your Claude sub,
+#                                                     # no API key, compute off your machine)
 # fields = ["description", "tags"]                     # add "domain" (from top dir) if you want it
 # [enrich.keys]                                        # write into YOUR schema's field names
 # description = "summary"                              # (default: the kind name)
@@ -105,14 +109,15 @@ exit 0
 # The instruction doc that TEACHES an agent to use repolens — the missing half:
 # tools are useless if the agent doesn't know to reach for them. Written by
 # `repolens rule --install` (and `init`) to .claude/rules/repolens.md (auto-loads
-# in Claude Code) or AGENTS.md. Deliberately short — it loads every session.
+# in Claude Code) or AGENTS.md. Deliberately short — it loads every session. The
+# marker sits at the BOTTOM (idempotency + non-clobber) so the file opens with the H1.
 RULE_MARKER = "<!-- repolens:rule -->"
 RULE_DOC = f"""\
-{RULE_MARKER}
 # Using repolens in this repo
 
-This repo is indexed by **repolens** — ranked search + hygiene over its docs, code
-purpose-lines, and DB schema. The index self-refreshes, so results are always current.
+This repo is indexed by **repolens** — lexical/BM25 ranked search + hygiene over its
+docs, code purpose-lines, and DB schema. The index self-refreshes, so results are
+always current.
 
 - **`repolens find "<what you're after>"`** — when you know the _concept_ but not the
   file ("where does X live", "which file handles Y"). Returns the right few files,
@@ -120,27 +125,7 @@ purpose-lines, and DB schema. The index self-refreshes, so results are always cu
 - **`rg` / grep** — when you already know the exact string, or need _every_ match.
 - **`repolens lint`** — corpus hygiene (dead links, malformed frontmatter) before a commit.
 
-Routing rule: **concept → `repolens find`; exact string → `rg`.** (repolens is lexical/BM25.)
-"""
+Routing rule: **concept → `repolens find`; exact string → `rg`.**
 
-
-# The instruction doc that TEACHES an agent to use repolens — the missing half:
-# tools are useless if the agent doesn't know to reach for them. Written by
-# `repolens rule --install` (and `init`) to .claude/rules/repolens.md (auto-loads
-# in Claude Code) or AGENTS.md. Deliberately short — it loads every session.
-RULE_MARKER = "<!-- repolens:rule -->"
-RULE_DOC = f"""\
 {RULE_MARKER}
-# Using repolens in this repo
-
-This repo is indexed by **repolens** — ranked search + hygiene over its docs, code
-purpose-lines, and DB schema. The index self-refreshes, so results are always current.
-
-- **`repolens find "<what you're after>"`** — when you know the _concept_ but not the
-  file ("where does X live", "which file handles Y"). Returns the right few files,
-  ranked and described — reach for this before reading around or broad-grepping.
-- **`rg` / grep** — when you already know the exact string, or need _every_ match.
-- **`repolens lint`** — corpus hygiene (dead links, malformed frontmatter) before a commit.
-
-Routing rule: **concept → `repolens find`; exact string → `rg`.** (repolens is lexical/BM25.)
 """

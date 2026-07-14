@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repolens"
-version = "0.7.0"
+version = "0.7.1"
 description = "Ranked, described search over a repo's docs + code + data (including gitignored content), plus a typed corpus linter. Built for repos worked by a grep-on-demand agent."
 readme = "README.md"
 requires-python = ">=3.11"

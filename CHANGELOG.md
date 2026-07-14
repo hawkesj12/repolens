@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-14
+
+### Added
+
+- **`enrich` command provider** — `[enrich].command` runs any CLI that reads the
+  prompt on stdin and prints the answer (takes precedence over the HTTP endpoint).
+  Set `command = "claude -p --model haiku"` to enrich on your **Claude subscription**
+  — no API key, and the compute runs off your machine, not a local model pegging
+  your CPU. Any other prompt→text CLI works too. Still stdlib-only.
+
+### Fixed
+
+- **`enrich --force` preserves a doc's other frontmatter keys** — it regenerates the
+  managed fields (description/domain/tags) by key-merge now, instead of rewriting the
+  whole block, so unrelated keys survive a force pass.
+- Rule doc: header calls out "lexical/BM25"; the `<!-- repolens:rule -->` marker moved
+  to the bottom so the file opens with its heading.
+
 ## [0.7.0] — 2026-07-14
 
 ### Added
@@ -189,7 +207,8 @@ All notable changes to this project are documented here. The format follows
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/hawkesj12/repolens/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/hawkesj12/repolens/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/hawkesj12/repolens/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/hawkesj12/repolens/compare/v0.5.0...v0.6.0
