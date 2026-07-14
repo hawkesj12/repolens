@@ -187,14 +187,17 @@ def _enrich_doc(path, rel, config, fields, dry, force) -> str | None:
 # that already self-describes (unless force). Returns a line, or None.
 # ═══════════════════════════════════════════════════════════════
 def _enrich_code(path, rel, config, dry, force) -> str | None:
+    # Code purpose lines are FILL-ONLY, even under --force: an existing docstring is
+    # authoritative, and prepending a second one would stack docstrings. (--force
+    # regenerates DOC frontmatter, which enrich owns; it leaves code docstrings.)
     text = path.read_text(errors="ignore")
     if path.suffix == ".py":
         try:
-            if ast.get_docstring(ast.parse(text)) and not force:
+            if ast.get_docstring(ast.parse(text)):
                 return None
         except SyntaxError:
             return None
-    elif re.match(r"^\s*#\s*purpose:", text) and not force:
+    elif re.match(r"^\s*#\s*purpose:", text):
         return None
     purpose = _gen_code(config, text)
     if not purpose:

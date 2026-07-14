@@ -802,6 +802,16 @@ def test_enrich_command_provider(tmp_path):
     assert "description: cmd doc." in txt and "tags: alpha, beta" in txt
 
 
+def test_enrich_code_force_does_not_stack_docstring(tmp_path, monkeypatch):
+    # code is fill-only even under --force: an existing docstring is not doubled
+    monkeypatch.setattr(enrich, "_ask", _fake_ask)
+    _root, cfg = _repo(tmp_path, "", {"s.py": '"""existing purpose."""\nx = 1\n'})
+    enrich.enrich_repo(tmp_path, cfg, code_only=True, force=True)
+    src = (tmp_path / "s.py").read_text()
+    assert src.count('"""') == 2  # one docstring (open+close), not stacked to 4
+    assert "existing purpose." in src  # original kept
+
+
 def test_enrich_force_preserves_other_keys(tmp_path, monkeypatch):
     # --force regenerates our fields but must NOT drop a doc's other frontmatter
     monkeypatch.setattr(enrich, "_ask", _fake_ask)
