@@ -12,6 +12,10 @@ build/
 .pytest_cache/
 .ruff_cache/
 
+# Local design/working docs — next-phase spec, kept out of the public repo
+HANDOFF.md
+VISION.md
+
 # OS
 .DS_Store
 
