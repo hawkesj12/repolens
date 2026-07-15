@@ -13,14 +13,6 @@ license-files = ["LICENSE"]
 authors = [{ name = "Justin Hawkes" }]
 keywords = ["repository", "search", "index", "lint", "findability", "claude-code", "agent", "fts5"]
 dependencies = []
-
-# The core is stdlib-only. Semantic (hybrid) search is an OPT-IN extra: pip install
-# 'repolens[semantic]'. fastembed = ONNX embeddings on CPU (no service, no Ollama);
-# sqlite-vec = the fast vec0 KNN path (repolens falls back to numpy brute-force cosine
-# when a python sqlite3 build can't load the extension); numpy backs that fallback.
-[project.optional-dependencies]
-semantic = ["fastembed>=0.3", "sqlite-vec>=0.1", "numpy>=1.24"]
-
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -31,6 +23,13 @@ classifiers = [
     "Topic :: Software Development :: Documentation",
     "Topic :: Utilities",
 ]
+
+# The core is stdlib-only. Semantic (hybrid) search is an OPT-IN extra: pip install
+# 'repolens[semantic]'. fastembed = ONNX embeddings on CPU (no service, no Ollama);
+# sqlite-vec = the fast vec0 KNN path (repolens falls back to numpy brute-force cosine
+# when a python sqlite3 build can't load the extension); numpy backs that fallback.
+[project.optional-dependencies]
+semantic = ["fastembed>=0.3", "sqlite-vec>=0.1", "numpy>=1.24"]
 
 [project.scripts]
 repolens = "repolens.cli:main"
