@@ -14,7 +14,9 @@ build/
 
 # Local design/working docs — next-phase spec, kept out of the public repo
 HANDOFF.md
+HANDOFF-*.md
 VISION.md
+.venv-*/
 
 # OS
 .DS_Store

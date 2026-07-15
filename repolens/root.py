@@ -61,12 +61,60 @@ DEFAULT_CODE_EXTS = {
 # and init found no manifests. Kept minimal — NOT an opinionated stack.
 DEFAULT_ENV_TOOLS = ["git", "python", "node"]
 
+# Semantic (hybrid) search defaults. Everything is opt-out-able but ON by default
+# so `repolens[semantic]` "just works" once installed; with the extra ABSENT the
+# subsystem's availability gate makes this inert (find stays lexical-only).
+#
+# Default: `BAAI/bge-base-en-v1.5` via fastembed (local, no service). Chunks are
+# SECTION-BOUNDED and small (~512 tokens) — they never cross a Markdown heading, and
+# a longer section is packed into ~512-token pieces (see chunk.py). bge-base is built
+# for exactly this short-passage retrieval and its 512-token limit is a non-issue at
+# this chunk size. `threads` throttles fastembed's CPU (0 = library default; a low
+# value keeps a big first build from maxing the machine). `provider` is the escape
+# hatch: "fastembed" (default) or "http" — any OpenAI-compatible /v1/embeddings
+# endpoint (local Ollama/LM Studio, or a metered API), keyed via api_key_env.
+DEFAULT_SEMANTIC = {
+    "enabled": True,
+    "provider": "fastembed",
+    "model": "BAAI/bge-base-en-v1.5",
+    "dims": 768,
+    "chunk_tokens": 512,
+    "overlap": 0.15,
+    "threads": 2,
+    "endpoint": "",
+    "api_key_env": "",
+}
+
 # Files larger than this are skipped at index time — a guard against a stray
 # huge file (a generated dump, a vendored blob) bloating the disposable index
 # and reading unbounded bytes into memory. Config-overridable via max_file_bytes.
 DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024  # 5 MB
 
-__all__ = ["find_root", "load_config", "CONFIG_NAME"]
+__all__ = [
+    "find_root",
+    "load_config",
+    "CONFIG_NAME",
+    "claude_dir",
+    "is_claude_repo",
+]
+
+
+# ═══════════════════════════════════════════════════════════════
+# claude_dir() / is_claude_repo()
+# ═══════════════════════════════════════════════════════════════
+# The Claude Code config dir for a repo: `<root>/.claude` normally, but
+# `<root>` ITSELF when the repo IS a `.claude` directory (e.g. installing
+# into ~/.claude — where `<root>/.claude` would be the nonexistent
+# `~/.claude/.claude`, silently skipping the hook + rule). is_claude_repo
+# gates whether init wires the SessionStart hook + the agent rule.
+# ═══════════════════════════════════════════════════════════════
+def claude_dir(root: pathlib.Path | str) -> pathlib.Path:
+    root = pathlib.Path(root)
+    return root if root.name == ".claude" else root / ".claude"
+
+
+def is_claude_repo(root: pathlib.Path | str) -> bool:
+    return claude_dir(root).is_dir()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -176,6 +224,29 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "keys": {k: str(v) for k, v in raw_keys.items() if isinstance(v, str)},
     }
 
+    # `[semantic]` — the hybrid-search tier. Merged over DEFAULT_SEMANTIC so a
+    # missing block gives working defaults and a partial block overrides only its
+    # keys. Types are coerced defensively (a bad value falls back to the default).
+    sm = data.get("semantic", {})
+    sm = sm if isinstance(sm, dict) else {}
+    semantic = dict(DEFAULT_SEMANTIC)
+    if "enabled" in sm:
+        semantic["enabled"] = bool(sm["enabled"])
+    for key in ("model", "provider", "endpoint", "api_key_env"):
+        if sm.get(key):
+            semantic[key] = str(sm[key])
+    for k in ("dims", "chunk_tokens", "threads"):
+        try:
+            if k in sm:
+                semantic[k] = int(sm[k])
+        except (TypeError, ValueError):
+            pass
+    try:
+        if "overlap" in sm:
+            semantic["overlap"] = float(sm["overlap"])
+    except (TypeError, ValueError):
+        pass
+
     return {
         "root": root,
         "index_path": index_path,
@@ -188,4 +259,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "include_gitignored": include_gitignored,
         "max_file_bytes": max_file_bytes,
         "enrich": enrich,
+        "semantic": semantic,
     }

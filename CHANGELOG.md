@@ -6,6 +6,57 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-15
+
+The semantic release: `find` becomes hybrid, and the invisible session digest
+becomes one visible, self-maintaining rule. Strictly additive to the existing
+SQLite/FTS5 index — no storage migration, and the core stays stdlib-only.
+
+### Added
+
+- **Hybrid `find` (BM25 + semantic, RRF).** Dense retrieval fuses with the existing
+  BM25 ranking via Reciprocal Rank Fusion (k=60): BM25 carries exact-term/identifier
+  precision, embeddings carry paraphrase/meaning recall, and RRF combines the two
+  per-document ranked lists with no score normalization. `--lexical` forces BM25-only.
+  On the reproducible 24-query acceptance set, hybrid was strictly better than lexical
+  on the hard conceptual/paraphrase queries and never worse on any query (measured on a
+  same-corpus subset; full-corpus confirmation pending — see the bake-off for the stats).
+- **Semantic tier as an opt-in extra (`pip install 'repolens[semantic]'`).** Embeddings
+  via `fastembed` (ONNX, CPU, no service — no Ollama), default model
+  `BAAI/bge-base-en-v1.5` (768-dim, built for short-passage retrieval). Vectors store
+  in the same index through `sqlite-vec` (fast `vec0` KNN) with a **numpy brute-force
+  cosine fallback** when a Python `sqlite3` build can't load the extension — so semantic
+  search works everywhere; the active path is announced.
+- **Section-bounded chunking.** Docs split on Markdown heading boundaries — a chunk
+  never crosses a heading; a section within ~512 tokens is one chunk, a longer one is
+  packed into ~512-token pieces within the section. Chunks embed and roll up to their
+  best (min-distance) parent document, so per-doc BM25 and per-chunk vectors are
+  fusable. Only changed files re-embed (keyed off the existing content hash); a deleted
+  doc's chunks/vectors cascade away.
+- **CPU throttle + bring-your-own embedder.** `[semantic].threads` caps fastembed's CPU
+  so a big first build stays gentle. `[semantic].provider = "http"` routes embedding to
+  any OpenAI-compatible `/v1/embeddings` endpoint (local Ollama/LM Studio or a metered
+  API) via stdlib `urllib` — key from an env var, never stored in config. Alternate
+  models (`nomic-embed-text-v1.5`, `-Q`) get their required task prefixes automatically.
+- **The self-maintaining rule (`.claude/rules/repolens.md`).** A static header (what /
+  when / who / why / how) plus generated, delimited **Environment** (toolchain) and
+  **Map** (folder tree + DB schema) sections — a visible, openable file that replaces
+  the old invisible SessionStart digest.
+- **`repolens refresh` — the early-cutoff change-detector.** The SessionStart hook now
+  runs this: it compares a `hash(folder-set + DB schema + toolchain)` change-key to the
+  one stored in the rule and regenerates only the Map/Environment blocks on a real
+  change (a ~no-op otherwise, atomic write). The static header is never touched.
+- **`init` warm-build.** `repolens init` now builds the index immediately (including
+  embeddings when the extra is installed), so the first session isn't cold.
+
+### Changed
+
+- **SessionStart hook command is now `repolens refresh`** (was `repolens digest &&
+repolens env`); the rule carries the map + toolchain, so the map is visible instead
+  of injected. `digest` and `env` remain as standalone probes.
+- repolens no longer indexes its own generated rule file (`.claude/rules/repolens.md`).
+- `SCHEMA_VERSION` → 1.3 (added the `[semantic]` config block + chunks/vectors tables).
+
 ## [0.8.0] — 2026-07-14
 
 Hardening pass from an independent three-lens review, ahead of a PyPI release.

@@ -42,6 +42,27 @@ DEFAULT_CONFIG = """\
 # [env]
 # tools = ["git", "python", "node"]
 
+# Semantic (hybrid) search. ON by default when the `[semantic]` extra is installed
+# (pip install 'repolens[semantic]'); inert otherwise (find stays lexical-only).
+# Chunks are section-bounded and small (~512 tokens) — they never cross a Markdown
+# heading. `threads` throttles fastembed's CPU (low = gentle on the machine). Vectors
+# store in the same index (sqlite-vec fast path, numpy blob fallback). Nothing to
+# configure to get started — this block only tunes it.
+# [semantic]
+# enabled = true
+# model = "BAAI/bge-base-en-v1.5"   # short-passage retriever; fits the ~512 chunks
+# dims = 768
+# chunk_tokens = 512                # per-chunk target; a chunk never crosses a heading
+# overlap = 0.15
+# threads = 2                       # cap fastembed CPU threads (0 = all cores)
+#
+# Bring your own embedder instead of local fastembed — any OpenAI-compatible
+# /v1/embeddings endpoint (local Ollama/LM Studio, or a metered API):
+# provider = "http"
+# endpoint = "http://localhost:11434/v1/embeddings"
+# model = "nomic-embed-text"        # the model your endpoint serves
+# api_key_env = "OPENAI_API_KEY"    # env var holding the key (never store it here)
+
 # `repolens enrich` — generate description/tags frontmatter (+ code purpose lines)
 # with a LOCAL model. BRING YOUR OWN MODEL: point `model` at anything your endpoint
 # serves (ollama by default). It only FILLS MISSING fields (never clobbers; --force
@@ -129,3 +150,49 @@ Routing rule: **concept → `repolens find`; exact string → `rg`.**
 
 {RULE_MARKER}
 """
+
+
+# ── The dedicated, self-maintaining rule (Claude Code repos) ──────────────────
+# `.claude/rules/repolens.md` = a STATIC header (the five questions — written once)
+# + two GENERATED sections (Environment + Map) that a SessionStart change-detector
+# regenerates in place. The delimiters below bound the generated blocks so the
+# static header is never clobbered. This one visible, openable file replaces both
+# the old invisible digest-hook AND a hand-run structural scan.
+GEN_ENV_START = "<!-- repolens:env:start -->"
+GEN_ENV_END = "<!-- repolens:env:end -->"
+GEN_MAP_START = "<!-- repolens:map:start -->"
+GEN_MAP_END = "<!-- repolens:map:end -->"
+CHANGE_KEY_PREFIX = "<!-- repolens:change-key:"  # + <hash> + " -->"
+
+_RULE_HEADER_TMPL = """\
+# RepoLens — {name}
+
+This repo is indexed by **repolens** — hybrid (BM25 + semantic) ranked search over its
+docs, code purpose-lines, and DB schema, plus a self-refreshing map of the repo. The
+index self-maintains, so results are always current.
+
+- **What** — a self-maintaining index + ranked/semantic search + a live map of this repo.
+- **When** — reach for `repolens find "<concept>"` whenever you need to find where
+  something lives or search the corpus by meaning, _before_ grepping around. Already
+  know the exact string, or need every match? Use `rg`.
+- **Who** — you, the agent working this repo on the user's behalf.
+- **Why** — it searches by meaning and ranked relevance across the whole corpus (docs +
+  code + DB schema), more reliable than grep for "where is X".
+- **Where** — this repo. The generated sections below carry the exact toolchain
+  (Environment) and where things live (Map), so you're never blind to the repo you're in.
+
+Routing rule: **concept / where-is-X → `repolens find`; exact known string / every match → `rg`.**
+
+{marker}
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# rule_header()
+# ═══════════════════════════════════════════════════════════════
+# The STATIC top of the dedicated rule — the five questions, written
+# once and never regenerated. Carries RULE_MARKER (idempotency / non-
+# clobber) exactly like RULE_DOC.
+# ═══════════════════════════════════════════════════════════════
+def rule_header(name: str) -> str:
+    return _RULE_HEADER_TMPL.format(name=name, marker=RULE_MARKER)

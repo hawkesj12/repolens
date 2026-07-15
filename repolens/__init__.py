@@ -9,7 +9,8 @@ semantic index. Stdlib-only.
 
 from __future__ import annotations
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 # Bumped when the config or type-schema shape changes.
-SCHEMA_VERSION = "1.2"
+# 1.3: added the [semantic] config block (hybrid search) + the chunks/vectors tables.
+SCHEMA_VERSION = "1.3"

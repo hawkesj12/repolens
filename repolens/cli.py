@@ -61,6 +61,13 @@ def cmd_init(args) -> int:
                 f.write(templates.active_env_block(stack))
             print(f"env toolchain: {', '.join(stack)}")
 
+    # Warm build — build the index now (incl. embeddings when the [semantic] extra is
+    # installed) so the first session / first `find` isn't cold.
+    cfg = root.load_config(r)
+    n, code, tables, ms = index.build(r, cfg)
+    tbl = f" + {tables} db tables" if tables else ""
+    print(f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms")
+
     gi = r / ".gitignore"
     line = ".repometa/"
     existing = gi.read_text(encoding="utf-8") if gi.exists() else ""
@@ -88,11 +95,11 @@ def cmd_init(args) -> int:
     # that isn't here. The install is ADDITIVE: hookgen.install integrates with any
     # existing hooks and never clobbers them. --no-hook opts out.
     if not args.no_hook:
-        if (r / ".claude").is_dir():
-            print(hookgen.install(r, with_env=True))
+        if root.is_claude_repo(r):
+            print(hookgen.install(r))
         else:
             print(
-                "(no .claude/ — skipped the SessionStart digest hook; "
+                "(no .claude/ — skipped the SessionStart refresh hook; "
                 "run `repolens hook --install` if you use Claude Code)"
             )
 
@@ -100,7 +107,7 @@ def cmd_init(args) -> int:
     # Auto-written in a Claude Code repo (an auto-loading rule); elsewhere an opt-in
     # AGENTS.md via `repolens rule --install`. --no-rule opts out.
     if not args.no_rule:
-        if (r / ".claude").is_dir():
+        if root.is_claude_repo(r):
             print(ruledoc.install(r))
         else:
             print(
@@ -133,8 +140,18 @@ def cmd_find(args) -> int:
     r, cfg = _ctx()
     query = " ".join(args.query)
     t0 = time.time()
-    status = find.ensure_fresh(r, cfg, refresh=not args.no_refresh)
-    hits = find.search(cfg, query, args.k)
+    # A refresh failure (write-lock timeout, a down embedder endpoint, a model-load
+    # error) must never deny the user the results already in the index — warn and
+    # search what's there rather than crash with a traceback.
+    try:
+        status = find.ensure_fresh(r, cfg, refresh=not args.no_refresh)
+    except Exception as e:  # noqa: BLE001 — degrade, don't crash `find`
+        print(
+            f"⚠ index refresh failed ({e}) — searching the existing index",
+            file=sys.stderr,
+        )
+        status = "refresh failed — stale index"
+    hits = find.search(cfg, query, args.k, lexical_only=args.lexical)
     ms = (time.time() - t0) * 1000
     if args.json:
         print(json.dumps({"query": query, "status": status, "hits": hits}, indent=2))
@@ -212,20 +229,26 @@ def cmd_enrich(args) -> int:
 
 def cmd_hook(args) -> int:
     r, _cfg = _ctx()
-    with_env = not args.no_env
     if args.install or args.check:
-        print(hookgen.install(r, with_env=with_env, check=args.check))
+        print(hookgen.install(r, check=args.check))
     else:
-        print(hookgen.snippet(with_env=with_env))
+        print(hookgen.snippet())
     return 0
 
 
 def cmd_rule(args) -> int:
-    r, _cfg = _ctx()
+    r, cfg = _ctx()
     if args.install or args.check:
-        print(ruledoc.install(r, check=args.check))
+        print(ruledoc.install(r, check=args.check, config=cfg))
     else:
         print(ruledoc.snippet())
+    return 0
+
+
+def cmd_refresh(args) -> int:
+    r, cfg = _ctx()
+    msg = ruledoc.refresh(r, cfg)
+    print(msg or "repolens rule up to date (no structural change).")
     return 0
 
 
@@ -241,7 +264,7 @@ def main(argv=None) -> int:
 
     p_init = sub.add_parser(
         "init",
-        help="scaffold .repometa.toml + gitignore + hooks (pre-commit lint + SessionStart digest/env)",
+        help="scaffold .repometa.toml + gitignore + warm index + hooks (pre-commit lint + SessionStart refresh)",
     )
     p_init.add_argument("--force", action="store_true", help="overwrite existing files")
     p_init.add_argument(
@@ -250,7 +273,7 @@ def main(argv=None) -> int:
     p_init.add_argument(
         "--no-hook",
         action="store_true",
-        help="don't install the SessionStart digest/env hook (auto-installed in Claude Code repos)",
+        help="don't install the SessionStart refresh hook (auto-installed in Claude Code repos)",
     )
     p_init.add_argument(
         "--no-rule",
@@ -276,6 +299,11 @@ def main(argv=None) -> int:
     p_find.add_argument("--json", action="store_true")
     p_find.add_argument(
         "--no-refresh", action="store_true", help="skip the staleness rebuild"
+    )
+    p_find.add_argument(
+        "--lexical",
+        action="store_true",
+        help="BM25-only (skip the semantic half of the hybrid search)",
     )
     p_find.set_defaults(func=cmd_find)
 
@@ -303,7 +331,8 @@ def main(argv=None) -> int:
     ).set_defaults(func=cmd_env)
 
     p_hook = sub.add_parser(
-        "hook", help="print (or --install) a SessionStart hook running digest/env"
+        "hook",
+        help="print (or --install) a SessionStart hook running `repolens refresh`",
     )
     p_hook.add_argument(
         "--install",
@@ -313,12 +342,13 @@ def main(argv=None) -> int:
     p_hook.add_argument(
         "--check", action="store_true", help="dry-run: show what --install would add"
     )
-    p_hook.add_argument(
-        "--no-env",
-        action="store_true",
-        help="don't also run `repolens env` in the hook (env is on by default)",
-    )
     p_hook.set_defaults(func=cmd_hook)
+
+    p_refresh = sub.add_parser(
+        "refresh",
+        help="regenerate the rule's Map/Environment when structure changed (SessionStart hook)",
+    )
+    p_refresh.set_defaults(func=cmd_refresh)
 
     p_enrich = sub.add_parser(
         "enrich",

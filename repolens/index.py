@@ -22,7 +22,17 @@ import subprocess
 import sys
 import time
 
-from . import frontmatter, purpose
+from . import frontmatter, purpose, semantic
+from . import root as _root
+
+
+def _self_rule_rel(root: pathlib.Path) -> str:
+    # repolens's OWN generated rule (ruledoc.py writes this), relative to root — a
+    # derived artifact, never source. Skipping it keeps repolens from indexing its own
+    # output (a noise ".claude/" folder in the map + change-key churn). Handles a repo
+    # rooted AT .claude, where the rule is `rules/repolens.md`, not `.claude/rules/...`.
+    rule = _root.claude_dir(root) / "rules" / "repolens.md"
+    return str(rule.relative_to(root)).replace("\\", "/")
 
 
 def _first_heading(text: str) -> str:
@@ -75,6 +85,7 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
     skip_dirs, skip_files = config["skip_dirs"], config["skip_files"]
     exts = config["code_exts"]
     allowed = _not_ignored(root, config)  # None = index all (see docstring)
+    self_rule = _self_rule_rel(root)  # repolens's own generated rule — never index it
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in skip_dirs]
         for fn in fns:
@@ -84,7 +95,7 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
                 if p.is_symlink():
                     continue  # never follow a symlink out of the repo (leak surface)
                 rel = str(p.relative_to(root))
-                if rel in skip_files:
+                if rel in skip_files or rel.replace("\\", "/") == self_rule:
                     continue
                 if allowed is not None and rel not in allowed:
                     continue  # gitignored — skipped by default (see _not_ignored)
@@ -164,9 +175,11 @@ def _db_sig(config: dict) -> str:
 # _create_schema()
 # ═══════════════════════════════════════════════════════════════
 # docs (FTS5 or plain) + the sparse frontmatter EAV + the files
-# bookkeeping table + a tiny meta kv. Nothing repo-specific.
+# bookkeeping table + a tiny meta kv, then the semantic chunk/vector
+# tables (a no-op when the [semantic] extra isn't installed). Nothing
+# repo-specific.
 # ═══════════════════════════════════════════════════════════════
-def _create_schema(con: sqlite3.Connection) -> None:
+def _create_schema(con: sqlite3.Connection, config: dict) -> None:
     if has_fts5():
         # porter stemming so `find "ranking"` matches "ranked" — closes a real
         # recall gap. (Won't split identifiers; camelCase/snake_case stays literal.)
@@ -183,21 +196,26 @@ def _create_schema(con: sqlite3.Connection) -> None:
         "CREATE TABLE files (relpath TEXT PRIMARY KEY, size INTEGER, mtime REAL, hash TEXT)"
     )
     con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    if config["semantic"]["enabled"] and semantic.available(config):
+        semantic.ensure_schema(con, config)
 
 
 # ═══════════════════════════════════════════════════════════════
 # _insert_doc()
 # ═══════════════════════════════════════════════════════════════
-# Index one file into `docs` (+ frontmatter EAV rows for markdown).
-# Caller owns the `files` bookkeeping row. Returns True if indexed.
-# Files larger than max_bytes are skipped (unbounded-read / index-bloat
-# guard) — 0 means no cap.
+# Index one file into `docs` (+ frontmatter EAV rows for markdown, +
+# per-chunk embeddings for markdown when the [semantic] tier is on).
+# Caller owns the `files` bookkeeping row and must have cleared any
+# prior chunks for this relpath (see semantic.delete_doc). Returns True
+# if indexed. Files larger than max_bytes are skipped (unbounded-read /
+# index-bloat guard) — 0 means no cap.
 # ═══════════════════════════════════════════════════════════════
 def _insert_doc(
     con: sqlite3.Connection,
     root: pathlib.Path,
     p: pathlib.Path,
     is_code: bool,
+    config: dict,
     max_bytes: int = 0,
 ) -> bool:
     rel = str(p.relative_to(root))
@@ -223,6 +241,15 @@ def _insert_doc(
                 "INSERT INTO frontmatter VALUES (?,?,?)",
                 [(rel, k, v) for k, v in kv.items()],
             )
+        # Semantic tier: embed the doc's chunks (no-op when the extra is absent
+        # or [semantic].enabled is false). md content only — code is purpose-line.
+        # A single doc's embed failure (endpoint down, model load) must not abort the
+        # whole build — log and skip; the doc stays lexically indexed (still findable).
+        if config["semantic"]["enabled"] and semantic.available(config):
+            try:
+                semantic.embed_doc(con, rel, text, config)
+            except Exception as e:  # noqa: BLE001 — isolate a per-doc embed failure
+                print(f"⚠ embed skipped for {rel}: {e}", file=sys.stderr)
     return True
 
 
@@ -279,13 +306,13 @@ def build(
     tmp = db_path.with_name(f"{db_path.name}.tmp-{os.getpid()}")
     tmp.unlink(missing_ok=True)
     con = sqlite3.connect(tmp)
-    _create_schema(con)
+    _create_schema(con, config)
 
     n = code = 0
     max_bytes = config.get("max_file_bytes", 0)
     for is_code in (False, True):
         for p in _walk(root, config, code=is_code):
-            if not _insert_doc(con, root, p, is_code, max_bytes):
+            if not _insert_doc(con, root, p, is_code, config, max_bytes):
                 continue
             try:
                 size, mtime = _stat(p)
@@ -327,6 +354,11 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
         return n + code + tables, 0, (time.time() - t0) * 1000
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA journal_mode=WAL")
+    # Wait up to 30s for the single WAL writer lock rather than the implicit 5s — a slow
+    # incremental (many changed files with embedding) can hold it past 5s, and a bare
+    # default makes every concurrent session's `find` refresh crash. cmd_find also
+    # catches the timeout and degrades to a read-only search (see cli.cmd_find).
+    con.execute("PRAGMA busy_timeout=30000")
     have = {
         r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
@@ -337,6 +369,11 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
 
     changed = deleted = 0
     max_bytes = config.get("max_file_bytes", 0)
+    sem_on = config["semantic"]["enabled"] and semantic.available(config)
+    if sem_on:
+        # An index built before the semantic tier has no chunk tables yet; create
+        # them (idempotent) so incremental embedding has somewhere to write.
+        semantic.ensure_schema(con, config)
     con.execute("BEGIN")
     stored = {
         r[0]: (r[1], r[2], r[3])
@@ -362,7 +399,9 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
                 continue
             con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
             con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
-            if _insert_doc(con, root, p, is_code, max_bytes):
+            if sem_on:
+                semantic.delete_doc(con, rel)  # drop the doc's old chunk-set first
+            if _insert_doc(con, root, p, is_code, config, max_bytes):
                 con.execute(
                     "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
                     (rel, size, mtime, h),
@@ -373,6 +412,8 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
         con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
         con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
         con.execute("DELETE FROM files WHERE relpath=?", (rel,))
+        if sem_on:
+            semantic.delete_doc(con, rel)  # cascade-delete orphaned chunks/vectors
         deleted += 1
 
     cur_sig = _db_sig(config)

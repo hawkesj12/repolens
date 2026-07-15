@@ -7,7 +7,10 @@ import os
 import sqlite3
 import subprocess
 
+import pytest
+
 from repolens import (
+    chunk,
     cli,
     digest,
     discover,
@@ -21,9 +24,21 @@ from repolens import (
     purpose,
     root,
     ruledoc,
+    rulegen,
     schema,
+    semantic,
     templates,
 )
+
+
+@pytest.fixture(autouse=True)
+def _semantic_off_by_default(monkeypatch):
+    # Keep the suite hermetic + deterministic whether or not the [semantic] extra is
+    # installed: the REAL tier is off by default, so `find` stays lexical (matching the
+    # pinned rankings) and no index build downloads a model. Semantic tests opt back in
+    # with fake embeddings via _force_blob. The real embedding path is validated end-to-
+    # end by the acceptance bake-off, not here.
+    monkeypatch.setattr(semantic, "available", lambda *a, **k: False)
 
 
 def _mkdb(path, tables):
@@ -426,9 +441,9 @@ def test_load_config_env_tools_default_and_override(tmp_path):
 
 # ── hook (NON-DESTRUCTIVE) ─────────────────────────────────────
 def test_hook_snippet_is_valid_json(tmp_path):
-    frag = hookgen.snippet(with_env=False)
+    frag = hookgen.snippet()
     obj = json.loads(frag[frag.index("{") :])
-    assert obj["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "repolens digest"
+    assert obj["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "repolens refresh"
 
 
 def test_hook_check_writes_nothing(tmp_path):
@@ -455,12 +470,12 @@ def test_hook_install_additive_preserves_existing_and_idempotent(tmp_path):
     data = json.loads(settings.read_text())
     cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
     assert "my-existing.sh" in cmds  # existing hook PRESERVED
-    assert "repolens digest" in cmds  # ours added
+    assert "repolens refresh" in cmds  # ours added
     assert data["otherKey"] == 1  # other keys untouched
     hookgen.install(tmp_path)  # idempotent
     data2 = json.loads(settings.read_text())
     cmds2 = [h["command"] for g in data2["hooks"]["SessionStart"] for h in g["hooks"]]
-    assert cmds2.count("repolens digest") == 1
+    assert cmds2.count("repolens refresh") == 1
 
 
 def test_cmd_init_seeds_env_tools(tmp_path, monkeypatch):
@@ -475,7 +490,7 @@ def test_cmd_init_seeds_env_tools(tmp_path, monkeypatch):
 def test_cmd_init_installs_session_hook_when_claude_repo(tmp_path, monkeypatch):
     # A Claude Code repo (has .claude/) → init wires the SessionStart hook by
     # DEFAULT, ADDITIVELY: an existing unrelated hook survives ("even if there
-    # are some"), and ours runs digest AND env.
+    # are some"), and ours runs the `repolens refresh` change-detector.
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir()
@@ -494,7 +509,7 @@ def test_cmd_init_installs_session_hook_when_claude_repo(tmp_path, monkeypatch):
     data = json.loads(settings.read_text())
     cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
     assert "memory.sh" in cmds  # existing hook PRESERVED, not clobbered
-    assert "repolens digest && repolens env" in cmds  # ours, WITH env by default
+    assert "repolens refresh" in cmds  # ours, the change-detector
 
 
 def test_cmd_init_no_hook_skips_session_hook(tmp_path, monkeypatch):
@@ -510,6 +525,29 @@ def test_cmd_init_no_claude_dir_never_presumes_harness(tmp_path, monkeypatch, ca
     cli.main(["init"])
     assert not (tmp_path / ".claude" / "settings.json").exists()
     assert "no .claude/" in capsys.readouterr().out
+
+
+def test_cmd_init_self_hosts_when_root_is_dotclaude(tmp_path, monkeypatch):
+    # Installing INTO a `.claude` dir (e.g. ~/.claude): the root IS `.claude`, so the
+    # hook + rule go in the root itself — not the nonexistent `<root>/.claude` that the
+    # old check looked for and silently skipped.
+    dc = tmp_path / ".claude"
+    dc.mkdir()
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: dc)
+    cli.main(["init"])
+    assert (dc / "settings.json").is_file()  # hook wired into .claude itself
+    assert (dc / "rules" / "repolens.md").is_file()  # rule too
+    data = json.loads((dc / "settings.json").read_text())
+    cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert "repolens refresh" in cmds
+
+
+def test_self_rule_rel_handles_dotclaude_root(tmp_path):
+    # The self-index skip must resolve the rule's real relpath in both layouts.
+    assert index._self_rule_rel(tmp_path) == ".claude/rules/repolens.md"
+    dc = tmp_path / ".claude"
+    dc.mkdir()
+    assert index._self_rule_rel(dc) == "rules/repolens.md"
 
 
 # ── gitignore-respecting default ───────────────────────────────
@@ -985,3 +1023,390 @@ def test_cmd_init_no_rule_skips(tmp_path, monkeypatch):
     (tmp_path / ".claude").mkdir()
     cli.main(["init", "--no-hook", "--no-rule"])
     assert not (tmp_path / ".claude" / "rules" / "repolens.md").exists()
+
+
+# ── v0.9 semantic tier: config, chunking, vector store, hybrid ─────
+def test_load_config_semantic_defaults_and_override(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["semantic"]["enabled"] is True
+    assert cfg["semantic"]["model"] == "BAAI/bge-base-en-v1.5"
+    assert cfg["semantic"]["dims"] == 768 and cfg["semantic"]["chunk_tokens"] == 512
+    assert (
+        cfg["semantic"]["provider"] == "fastembed" and cfg["semantic"]["threads"] == 2
+    )
+    _root, cfg = _repo(
+        tmp_path,
+        '[semantic]\nprovider = "http"\nmodel = "nomic-embed-text"\n'
+        'endpoint = "http://localhost:11434/v1/embeddings"\napi_key_env = "MY_KEY"\n'
+        "threads = 4\nchunk_tokens = 400\n",
+    )
+    assert cfg["semantic"]["provider"] == "http"
+    assert cfg["semantic"]["endpoint"] == "http://localhost:11434/v1/embeddings"
+    assert cfg["semantic"]["api_key_env"] == "MY_KEY"
+    assert cfg["semantic"]["threads"] == 4 and cfg["semantic"]["chunk_tokens"] == 400
+
+
+def test_chunk_one_chunk_per_heading_section():
+    doc = "preamble text here\n\n# Alpha\n\nalpha body\n\n## Beta\n\nbeta body\n"
+    chunks = chunk.chunk_document(doc)
+    texts = [t for _ix, t in chunks]
+    assert len(chunks) == 3  # preamble + Alpha + Beta
+    assert texts[0].startswith("preamble")
+    assert "# Alpha" in texts[1] and "alpha body" in texts[1]
+    assert "## Beta" in texts[2] and "beta body" in texts[2]
+    assert [ix for ix, _c in chunks] == [0, 1, 2]
+
+
+def test_chunk_short_headed_doc_single_chunk():
+    chunks = chunk.chunk_document("# Title\n\nA short paragraph about foxes.\n")
+    assert len(chunks) == 1 and "foxes" in chunks[0][1]
+
+
+def test_chunk_oversized_section_subsplits_under_cap():
+    # A single heading-section far larger than the cap must sub-split (never truncate).
+    cap_tokens = 50  # cap = 200 chars
+    body = "# Big\n\n" + "\n\n".join(f"paragraph {i} filler words" for i in range(60))
+    chunks = chunk.chunk_document(body, chunk_tokens=cap_tokens)
+    assert len(chunks) > 1
+    assert all(len(c) <= cap_tokens * chunk.CHARS_PER_TOKEN for _ix, c in chunks)
+
+
+def test_chunk_no_headings_recursive_fallback():
+    # No headings → recursive packing, never one giant chunk.
+    body = "\n\n".join(f"line {i} with filler" for i in range(60))
+    chunks = chunk.chunk_document(body, chunk_tokens=50)
+    assert len(chunks) > 1
+    assert all(len(c) <= 50 * chunk.CHARS_PER_TOKEN for _ix, c in chunks)
+
+
+def test_chunk_never_exceeds_cap():
+    # The reproduced overshoot: a re-seeded chunk (overlap tail + next piece) must NOT
+    # exceed the cap, or a model at exactly its context limit truncates the tail.
+    cap = 50
+    limit = cap * chunk.CHARS_PER_TOKEN  # 200 chars
+    # ~180-char paragraphs: the case that produced a 211-char chunk before the fix.
+    body = "\n\n".join("word " * 36 for _ in range(40))
+    for doc in (body, "# H\n\n" + body, "pre\n\n## S\n\n" + body):
+        chunks = chunk.chunk_document(doc, chunk_tokens=cap, overlap=0.15)
+        assert chunks, doc[:20]
+        assert all(len(c) <= limit for _ix, c in chunks), max(
+            len(c) for _ix, c in chunks
+        )
+
+
+# Fake, dependency-free embeddings so the vector store / KNN / fusion are testable
+# without downloading a real model. A 5-word vocab; a text -> normalized count vector.
+_VOCAB = ["alpha", "beta", "gamma", "fox", "hound"]
+
+
+def _fake_embed(config, texts):
+    import numpy as np
+
+    out = []
+    for t in texts:
+        tl = t.lower()
+        v = np.array([float(tl.count(w)) for w in _VOCAB], dtype="float32")
+        if v.sum() == 0:
+            v = np.ones(len(_VOCAB), dtype="float32")
+        n = float(np.linalg.norm(v))
+        out.append(v / n if n else v)
+    return out
+
+
+def _force_blob(monkeypatch):
+    # Exercise the portable path everywhere: pretend the extra is installed, force the
+    # numpy blob backend (no sqlite-vec), and swap in the fake embedder.
+    monkeypatch.setattr(semantic, "available", lambda *a, **k: True)
+    monkeypatch.setattr(semantic, "active_path", lambda *a, **k: "blob")
+    monkeypatch.setattr(semantic, "_embed_texts", _fake_embed)
+
+
+class _FakeResp:
+    def __init__(self, body):
+        self._b = body
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _fake_urlopen(req, timeout=None):
+    # An OpenAI-compatible /v1/embeddings server, faked: read the request's `input`,
+    # return one deterministic vector per text (same _VOCAB scheme as _fake_embed).
+    payload = json.loads(req.data.decode())
+    data = []
+    for i, t in enumerate(payload["input"]):
+        tl = t.lower()
+        vec = [float(tl.count(w)) for w in _VOCAB]
+        if sum(vec) == 0:
+            vec = [1.0] * len(_VOCAB)
+        data.append({"index": i, "embedding": vec})
+    return _FakeResp(json.dumps({"data": data}).encode())
+
+
+def test_http_provider_embeds_via_endpoint(tmp_path, monkeypatch):
+    # provider="http" routes embedding to an OpenAI-compatible endpoint (mocked), with
+    # NO fastembed. Force the blob store + swap urlopen; the real _embed_http dispatch runs.
+    import urllib.request
+
+    monkeypatch.setattr(semantic, "active_path", lambda *a, **k: "blob")
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    _root, cfg = _repo(
+        tmp_path,
+        '[semantic]\nprovider = "http"\n'
+        'endpoint = "http://localhost:11434/v1/embeddings"\nmodel = "m"\n',
+    )
+    con = sqlite3.connect(tmp_path / "http.db")
+    semantic.ensure_schema(con, cfg)
+    semantic.embed_doc(con, "alpha.md", "alpha alpha fox", cfg)
+    semantic.embed_doc(con, "beta.md", "beta hound", cfg)
+    con.commit()
+    hits = semantic.knn(con, "alpha", 5, cfg)
+    assert hits and hits[0][0] == "alpha.md"  # http-embedded vectors retrieve correctly
+
+
+def test_http_provider_available_needs_endpoint(monkeypatch):
+    # available() is provider-aware: http needs an endpoint, and the check must not
+    # require fastembed. Drop the autouse off-switch to exercise the real function.
+    monkeypatch.undo()
+    try:
+        import numpy  # noqa: F401
+    except Exception:
+        pytest.skip("numpy not installed")
+    cfg_no = {"semantic": {"provider": "http", "endpoint": ""}}
+    cfg_yes = {"semantic": {"provider": "http", "endpoint": "http://x/v1/embeddings"}}
+    assert semantic.available(cfg_no) is False
+    assert semantic.available(cfg_yes) is True
+
+
+# ── read-path containment (a semantic-tier failure must NOT crash find/build) ──
+def test_embed_http_malformed_raises(monkeypatch):
+    import urllib.request
+
+    cfg = {
+        "semantic": {
+            "provider": "http",
+            "endpoint": "http://x/v1/embeddings",
+            "model": "m",
+            "api_key_env": "",
+        }
+    }
+    # a 200 with a body missing "data"/"embedding" must raise EmbeddingError, not KeyError
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: _FakeResp(b'{"oops": 1}')
+    )
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._embed_http(cfg, ["hello"])
+
+
+def test_knn_empty_query_batch_returns_empty(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    monkeypatch.setattr(
+        semantic, "_embed_texts", lambda *a, **k: []
+    )  # embed yields nothing
+    _root, cfg = _repo(tmp_path, "")
+    con = sqlite3.connect(tmp_path / "e.db")
+    semantic.ensure_schema(con, cfg)
+    con.execute("INSERT INTO chunks(relpath, chunk_ix, text) VALUES ('a.md',0,'x')")
+    con.commit()
+    assert semantic.knn(con, "anything", 5, cfg) == []  # no dense hits, not IndexError
+
+
+def test_build_survives_embed_failure(tmp_path, monkeypatch, capsys):
+    _force_blob(monkeypatch)
+
+    def _boom(*a, **k):
+        raise RuntimeError("endpoint down")
+
+    monkeypatch.setattr(semantic, "embed_doc", _boom)
+    _root, cfg = _repo(
+        tmp_path, "", {"a.md": "# A\n\nalpha\n", "b.md": "# B\n\nbeta\n"}
+    )
+    index.build(tmp_path, cfg)  # must NOT raise
+    con = sqlite3.connect(cfg["index_path"])
+    rels = {r[0] for r in con.execute("SELECT relpath FROM docs WHERE kind='md'")}
+    con.close()
+    assert {"a.md", "b.md"} <= rels  # docs still lexically indexed
+    assert "embed skipped" in capsys.readouterr().err
+
+
+def test_cmd_find_degrades_on_refresh_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    _repo(tmp_path, "", {"a.md": "# A\n\nalpha content\n"})
+    index.build(tmp_path, root.load_config(tmp_path))  # an index already exists
+    monkeypatch.setattr(
+        find,
+        "ensure_fresh",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")),
+    )
+    rc = cli.main(["find", "alpha"])  # refresh raises → must still search, not crash
+    out = capsys.readouterr()
+    assert rc == 0 and "a.md" in out.out
+    assert "refresh failed" in out.err
+
+
+def test_vec0_backend_roundtrip(tmp_path, monkeypatch):
+    # The SHIPPED-DEFAULT path (sqlite-vec vec0) — skipped cleanly where the extension
+    # isn't installed (CI), exercised for real where it is. Fake vectors (no model), so
+    # it needs only sqlite-vec + numpy: force available() True and let active_path do
+    # the REAL vec0 storage probe.
+    pytest.importorskip("sqlite_vec")
+    pytest.importorskip("numpy")
+    monkeypatch.setattr(semantic, "available", lambda *a, **k: True)
+    monkeypatch.setattr(semantic, "_embed_texts", _fake_embed)
+    if semantic.active_path() != "vec0":
+        pytest.skip("sqlite3 build can't load extensions here")
+    # dims=5 so the real vec0 table (declared float[dims]) matches _fake_embed's 5-dim vectors
+    _root, cfg = _repo(tmp_path, "[semantic]\ndims = 5\n")
+    con = sqlite3.connect(tmp_path / "vec0.db")
+    semantic.ensure_schema(con, cfg)  # creates the real vec0 virtual table
+    semantic.embed_doc(con, "alpha.md", "alpha alpha fox", cfg)
+    semantic.embed_doc(con, "beta.md", "beta hound", cfg)
+    con.commit()
+    hits = semantic.knn(
+        con, "alpha", 5, cfg
+    )  # MATCH ... ORDER BY distance + rowid join
+    assert hits and hits[0][0] == "alpha.md"
+    semantic.delete_doc(con, "alpha.md")  # cascade to vec_chunks
+    con.commit()
+    assert "alpha.md" not in {rp for rp, _d in semantic.knn(con, "alpha", 5, cfg)}
+
+
+def test_semantic_blob_roundtrip_rollup_and_delete(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(tmp_path, "")
+    con = sqlite3.connect(tmp_path / "vec.db")
+    semantic.ensure_schema(con, cfg)
+    semantic.embed_doc(con, "alpha.md", "alpha alpha fox\n\nmore alpha here", cfg)
+    semantic.embed_doc(con, "beta.md", "beta hound content", cfg)
+    con.commit()
+    hits = semantic.knn(con, "alpha", 5, cfg)
+    assert hits and hits[0][0] == "alpha.md"  # best-chunk rollup ranks the alpha doc
+    assert len({rp for rp, _d in hits}) == len(hits)  # per-DOC (rolled up), no dup docs
+    semantic.delete_doc(con, "alpha.md")
+    con.commit()
+    assert "alpha.md" not in {rp for rp, _d in semantic.knn(con, "alpha", 5, cfg)}
+
+
+def test_index_embeds_and_cascade_deletes_chunks(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nalpha fox\n"})
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    assert (
+        con.execute("SELECT count(*) FROM chunks WHERE relpath='a.md'").fetchone()[0]
+        >= 1
+    )
+    con.close()
+    (tmp_path / "a.md").unlink()
+    index.build_incremental(tmp_path, cfg)  # reconcile-delete must cascade to chunks
+    con = sqlite3.connect(cfg["index_path"])
+    assert (
+        con.execute("SELECT count(*) FROM chunks WHERE relpath='a.md'").fetchone()[0]
+        == 0
+    )
+    con.close()
+
+
+def test_hybrid_find_fuses_lexical_and_dense(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"alpha.md": "# alpha\n\nalpha fox\n", "beta.md": "# beta\n\nbeta hound\n"},
+    )
+    index.build(tmp_path, cfg)
+    hits = find.search(cfg, "alpha", 5)
+    assert hits[0]["relpath"] == "alpha.md"  # BM25 + dense both favor it → RRF top
+
+
+def test_find_lexical_only_skips_dense(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nalpha fox\n"})
+    index.build(tmp_path, cfg)
+    called = []
+    monkeypatch.setattr(semantic, "knn", lambda *a, **k: called.append(1) or [])
+    hits = find.search(cfg, "alpha", 5, lexical_only=True)
+    assert hits and hits[0]["relpath"] == "a.md"
+    assert not called  # the dense half was never consulted
+
+
+def test_rrf_scores_fuse_and_rank():
+    # a doc ranked well by EITHER list should rank up; a doc in both wins.
+    scores = find._rrf_scores(["a.md", "b.md", "c.md"], ["c.md", "a.md"])
+    assert scores["a.md"] > scores["b.md"]  # a is in both, b in one
+    assert scores["c.md"] > scores["b.md"]  # c is high in dense + in lexical
+
+
+# ── v0.9 rule-as-artifact: generated sections + change-detector ────
+def test_rulegen_change_key_stable_and_sensitive(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"README.md": "# r\n\nx\n", "docs/a.md": "# a\n\nx\n"}
+    )
+    k1 = rulegen.change_key(tmp_path, cfg)
+    assert k1 == rulegen.change_key(tmp_path, cfg)  # pure function — stable
+    (tmp_path / "newdir").mkdir()
+    (tmp_path / "newdir" / "n.md").write_text("# n\n\nx\n")
+    assert rulegen.change_key(tmp_path, cfg) != k1  # a new folder flips the key
+
+
+def test_rule_refresh_noop_then_regen_preserves_header(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "README.md").write_text("# demo\n\nx\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.md").write_text("# a\n\nx\n")
+    cli.main(["init", "--no-hook"])
+    rule = tmp_path / ".claude" / "rules" / "repolens.md"
+    text = rule.read_text()
+    assert templates.RULE_MARKER in text and templates.GEN_MAP_START in text
+    assert ruledoc.refresh(tmp_path) == ""  # nothing changed → no-op
+    (tmp_path / "newdir").mkdir()
+    (tmp_path / "newdir" / "n.md").write_text("# n\n\nx\n")
+    assert "refreshed" in ruledoc.refresh(tmp_path)  # structural change → regenerate
+    after = rule.read_text()
+    assert "# RepoLens — demo" in after  # STATIC header preserved (not clobbered)
+    assert "newdir/" in after  # Map regenerated with the new folder
+
+
+def test_rule_refresh_wont_touch_foreign_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    rule = tmp_path / ".claude" / "rules" / "repolens.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("# not ours\n\nhand-written\n")  # no RULE_MARKER
+    msg = ruledoc.refresh(tmp_path)
+    assert "not touching it" in msg
+    assert rule.read_text() == "# not ours\n\nhand-written\n"  # untouched
+
+
+def test_cmd_refresh_reports_up_to_date(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "README.md").write_text("# demo\n\nx\n")
+    cli.main(["init", "--no-hook"])
+    capsys.readouterr()
+    cli.main(["refresh"])
+    assert "up to date" in capsys.readouterr().out
+
+
+def test_index_skips_own_generated_rule(tmp_path):
+    # repolens must NOT index its own generated rule (self-reference / map noise).
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            ".claude/rules/repolens.md": "# RepoLens\n\ngenerated\n",
+            "real.md": "# r\n\nx\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rels = {r[0] for r in con.execute("SELECT relpath FROM docs")}
+    con.close()
+    assert "real.md" in rels
+    assert ".claude/rules/repolens.md" not in rels
