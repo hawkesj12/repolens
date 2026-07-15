@@ -1,26 +1,19 @@
 # Roadmap
 
-repolens is intentionally small — "the agent-context freshness layer." These are the changes that earn their place.
-
-## Shipped
-
-- **v0.2 — SQLite auto-discovery.** `init` finds the repo's databases (incl. gitignored) and wires their schema into the index automatically; multi-DB support.
-- **v0.3 — the freshness layer.** `repolens digest` (a tiny, budgeted repo map for a SessionStart hook), `repolens env` (OS-aware, manifest-seeded, present-only toolchain probe), `repolens hook` (non-destructive SessionStart installer). Positioned as "detect + inject, don't hand-maintain."
-- **v0.4 — `.gitignore` respected by default.** The file corpus skips gitignored paths, so secrets/`.env`/build output stay out of the index; `include_gitignored = true` opts back in for personal-knowledge repos. DB schema discovery is unaffected (names only, opt-in).
-- **v0.5 — incremental indexing + schema-agnostic frontmatter + rich digest.** `index` re-indexes only changed files (content-hash, stat-gated, WAL upsert + delete-reconcile; `--rebuild` backstop). A sparse `frontmatter(relpath,key,value)` EAV makes any frontmatter key queryable — no schema imposed (a total, zero-dep flat parser). `digest` gets rich: folders-with-purpose + all DB tables grouped by prefix, tiered (`--full`) and budgeted.
-- **v0.6 — `repolens enrich` (bring your own model).** Generate `description`/`tags` frontmatter + code purpose lines with a local model (ollama by default, configurable). Fills-only (never clobbers), gitignore-respecting, stdlib HTTP (no dependency). The metadata that feeds `find`/`digest` writes itself.
+repolens is intentionally small — "the agent-context freshness layer." This file tracks **direction**: what's still ahead and what's deliberately out of scope. For what's already shipped, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Later / maybe
 
-- **v0.3.1 — `digest --format llms-txt`** — also emit an `llms.txt` (the emerging generated-map convention) alongside the stdout digest.
-- **v1.0** — the stable, positioned release: find + lint + digest + env + hook, all solid.
+- **v1.0** — the stable, positioned release: find + lint + digest + env + hook + enrich, all solid, published on PyPI.
+- **`digest --format llms-txt`** — also emit an `llms.txt` (the emerging generated-map convention) alongside the stdout digest.
 - **Semantic search** — optional embeddings for meaning-based recall (currently lexical/BM25 only).
 - **More DB integrations** — beyond SQLite (Postgres schema, etc.), all opt-in.
 - **Richer purpose extraction** — a few more per-language rules.
-- **A watch mode** — rebuild on file-change events instead of on-demand.
+- **A stdlib `.gitignore` fallback parser** — enforce ignore rules even outside a git repo (v0.8 warns; this would honor them). Deferred as non-trivial (negation, globs, nesting).
 
 ## Non-goals
 
 - Not a `ripgrep` replacement (use `rg` for exhaustive literal/regex search).
 - Not a semantic code index like Cursor / Aider's repo-map.
 - Not a RAG system or a knowledge-management app.
+- **No `--watch` / file-event daemon.** `enrich` and `index` act on current state, so a scheduled/on-demand pass self-heals a missed run where an on-save hook would silently drop it. Cheap detection, no daemon — deliberate.
