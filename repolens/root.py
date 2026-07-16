@@ -224,6 +224,17 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "keys": {k: str(v) for k, v in raw_keys.items() if isinstance(v, str)},
     }
 
+    # `[map]` — the SessionEnd map-writer provider (bring-your-own-model, like
+    # [enrich]). `command` (empty by default) is any CLI that takes the folder facts
+    # on stdin and prints a rich Map body — e.g. `claude -p --model sonnet`. Empty =>
+    # the deterministic Map render (the public, no-model default). `enabled` gates it.
+    mp = data.get("map", {})
+    mp = mp if isinstance(mp, dict) else {}
+    mapcfg = {
+        "command": str(mp["command"]) if mp.get("command") else "",
+        "enabled": bool(mp.get("enabled", True)),
+    }
+
     # `[semantic]` — the hybrid-search tier. Merged over DEFAULT_SEMANTIC so a
     # missing block gives working defaults and a partial block overrides only its
     # keys. Types are coerced defensively (a bad value falls back to the default).
@@ -260,4 +271,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "max_file_bytes": max_file_bytes,
         "enrich": enrich,
         "semantic": semantic,
+        "map": mapcfg,
     }

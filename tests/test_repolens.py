@@ -21,6 +21,7 @@ from repolens import (
     hookgen,
     index,
     lint,
+    mapgen,
     purpose,
     root,
     ruledoc,
@@ -1410,3 +1411,139 @@ def test_index_skips_own_generated_rule(tmp_path):
     con.close()
     assert "real.md" in rels
     assert ".claude/rules/repolens.md" not in rels
+
+
+# ── [map] command-provider + key split + tidy ──────────────────────
+def test_load_config_map_defaults_and_parse(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["map"] == {"command": "", "enabled": True}  # opt-in: empty by default
+    _root, cfg = _repo(
+        tmp_path, '[map]\ncommand = "claude -p --model sonnet"\nenabled = false\n'
+    )
+    assert cfg["map"]["command"] == "claude -p --model sonnet"
+    assert cfg["map"]["enabled"] is False
+
+
+def test_mapgen_command_provider_and_fallbacks(tmp_path, monkeypatch):
+    snap = {"name": "demo", "dir_counts": {"skills": 3, "rules": 2}}
+    cfg = {"map": {"command": "whatever", "enabled": True}}
+    ok = subprocess.CompletedProcess(
+        "x", 0, stdout="- `skills/` (3) — the real skills\n- `rules/` (2) — the rules\n"
+    )
+    monkeypatch.setattr(mapgen.subprocess, "run", lambda *a, **k: ok)
+    out = mapgen.render_map_folders(snap, tmp_path, cfg)
+    assert out and "the real skills" in out  # model body used
+    # a crash → None (deterministic fallback)
+    monkeypatch.setattr(
+        mapgen.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError())
+    )
+    assert mapgen.render_map_folders(snap, tmp_path, cfg) is None
+    # garbage without a folder bullet → None
+    monkeypatch.setattr(
+        mapgen.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess("x", 0, "sorry, I cannot"),
+    )
+    assert mapgen.render_map_folders(snap, tmp_path, cfg) is None
+    # no command → None (never runs a subprocess)
+    assert mapgen.render_map_folders(snap, tmp_path, {"map": {"command": ""}}) is None
+    # a ```-fenced answer is unwrapped
+    monkeypatch.setattr(
+        mapgen.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            "x", 0, "```\n- `skills/` (3) — fenced\n```"
+        ),
+    )
+    out = mapgen.render_map_folders(snap, tmp_path, cfg)
+    assert out and "fenced" in out and "```" not in out
+    # a leaked preamble line before the first bullet is trimmed
+    monkeypatch.setattr(
+        mapgen.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            "x", 0, "Now I'll write the map.\n- `skills/` (3) — clean\n"
+        ),
+    )
+    out = mapgen.render_map_folders(snap, tmp_path, cfg)
+    assert out and out.startswith("- `") and "Now I'll" not in out
+
+
+def test_change_key_split_is_independent(tmp_path):
+    base = {"env_line": "[env] macOS", "folder_set": {"a", "a/b"}, "db_sig": ["t|c"]}
+    ek, mk = rulegen._env_key_from(base), rulegen._map_key_from(base)
+    env_only = dict(base, env_line="[env] linux")
+    assert rulegen._env_key_from(env_only) != ek  # env-key moves
+    assert rulegen._map_key_from(env_only) == mk  # ...map-key does NOT
+    map_only = dict(base, folder_set={"a", "a/b", "c"})
+    assert rulegen._map_key_from(map_only) != mk  # folder change moves map-key
+    assert rulegen._env_key_from(map_only) == ek  # ...env-key does NOT
+
+
+def test_folder_desc_authored_readme_only(tmp_path):
+    md = ["skills/a.md", "skills/README.md"]
+    # a member doc's description must NOT be borrowed for the folder
+    assert rulegen._folder_desc("skills", md, {"skills/a.md": "one skill"}) == ""
+    # an authored folder README description IS used
+    got = rulegen._folder_desc(
+        "skills", md, {"skills/README.md": "all the skills", "skills/a.md": "one"}
+    )
+    assert got == "all the skills"
+
+
+def test_refresh_scoping_map_owned_by_sessionend(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(
+        mapgen, "render_map_folders", lambda snap, r, c: "- `x/` (1) — MODELMAP"
+    )
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / "README.md").write_text("# demo\n\nx\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.md").write_text("# a\n\nx\n")  # a folder → a Map bullet
+    (tmp_path / ".repometa.toml").write_text('[map]\ncommand = "echo"\n')
+    cli.main(["init", "--no-hook"])
+    rule = tmp_path / ".claude" / "rules" / "repolens.md"
+    assert "MODELMAP" in rule.read_text()  # init used the map command
+    # a folder change; SessionStart refresh (Env-scoped when a map command is set)
+    # must NOT rewrite the Map — that's the SessionEnd job.
+    (tmp_path / "newdir").mkdir()
+    (tmp_path / "newdir" / "n.md").write_text("# n\n\nx\n")
+    monkeypatch.setattr(
+        mapgen, "render_map_folders", lambda snap, r, c: "- `x/` (1) — SECONDMAP"
+    )
+    ruledoc.refresh(tmp_path)
+    assert "SECONDMAP" not in rule.read_text()  # SessionStart left the Map alone
+    ruledoc.map_refresh(tmp_path)
+    assert "SECONDMAP" in rule.read_text()  # SessionEnd owns + regenerates it
+
+
+def test_hook_installs_sessionend_tidy_only_with_map_command(tmp_path):
+    hookgen.install(tmp_path, config={"map": {"command": "claude -p"}})
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    starts = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+    ends = [h["command"] for g in data["hooks"]["SessionEnd"] for h in g["hooks"]]
+    assert "repolens refresh" in starts and "repolens tidy" in ends
+
+
+def test_hook_no_sessionend_without_map_command(tmp_path):
+    hookgen.install(tmp_path, config={"map": {"command": ""}})
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert "SessionEnd" not in data["hooks"]  # public default: one hook only
+
+
+def test_cmd_tidy_gates_enrich_and_orders_before_map(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ruledoc, "map_refresh", lambda r, c=None, force=False: calls.append("map") or ""
+    )
+    monkeypatch.setattr(
+        enrich, "enrich_repo", lambda r, c, **k: calls.append("enrich") or ([], [])
+    )
+    (tmp_path / ".repometa.toml").write_text("")  # no [enrich].command
+    cli.main(["tidy"])
+    assert calls == ["map"]  # enrich skipped (unconfigured), map ran
+    calls.clear()
+    (tmp_path / ".repometa.toml").write_text('[enrich]\ncommand = "claude -p"\n')
+    cli.main(["tidy"])
+    assert calls == ["enrich", "map"]  # enrich first, then map

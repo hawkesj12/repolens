@@ -15,7 +15,7 @@ import pathlib
 from . import root as _root
 from . import rulegen, templates
 
-__all__ = ["snippet", "install", "refresh", "target_for"]
+__all__ = ["snippet", "install", "refresh", "map_refresh", "target_for"]
 
 
 def snippet() -> str:
@@ -80,31 +80,68 @@ def install(root: pathlib.Path, check: bool = False, config: dict | None = None)
 
 
 # ═══════════════════════════════════════════════════════════════
-# refresh()
+# _refresh()
 # ═══════════════════════════════════════════════════════════════
-# The SessionStart change-detector's action. Only the DEDICATED rule
-# has generated sections (a shared AGENTS.md has no hook to refresh it,
-# so this is a no-op there). Missing rule → write it. A pre-generated-
-# sections rule (older repolens) → upgrade in full once. Otherwise let
-# rulegen compare the change-key and regenerate ONLY the Map/Env blocks
-# when structure changed; empty string means "no change" (the common no-op).
+# Shared body for the two block-scoped detectors. Only the DEDICATED
+# rule has generated sections (a shared AGENTS.md has no hook, so this
+# is a no-op there). Guards against clobbering a non-repolens file at
+# the dedicated path, then lets rulegen compare the split change-keys
+# and regenerate only the requested block(s) when they differ (rulegen
+# self-heals a missing or pre-split legacy file). Empty string = "no
+# change" (the common no-op).
 # ═══════════════════════════════════════════════════════════════
-def refresh(root: pathlib.Path, config: dict | None = None) -> str:
+def _refresh(
+    root: pathlib.Path,
+    config: dict | None,
+    do_env: bool,
+    do_map: bool,
+    force_map: bool,
+    label: str,
+) -> str:
     target, kind = target_for(root)
     if kind != "dedicated":
         return ""
     if config is None:
         config = _root.load_config(root)
-    if not target.is_file():
-        content, _key = rulegen.full_rule(root, config)
-        rulegen.write_atomic(target, content)
-        return f"wrote repolens rule → {target}"
-    text = target.read_text(encoding="utf-8", errors="ignore")
-    if templates.RULE_MARKER not in text:
-        return f"⚠ {target} exists but isn't repolens's — not touching it."
-    if templates.GEN_MAP_START not in text:  # older static rule → upgrade once
-        content, _key = rulegen.full_rule(root, config)
-        rulegen.write_atomic(target, content)
-        return "upgraded repolens rule to generated sections"
-    changed, _key = rulegen.refresh(target, root, config)
-    return "refreshed repolens rule (Map/Environment)" if changed else ""
+    if target.is_file():
+        text = target.read_text(encoding="utf-8", errors="ignore")
+        if templates.RULE_MARKER not in text:
+            return f"⚠ {target} exists but isn't repolens's — not touching it."
+    changed, _keys = rulegen.refresh(
+        target, root, config, do_env=do_env, do_map=do_map, force_map=force_map
+    )
+    return f"refreshed repolens rule ({label})" if changed else ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# refresh() — the SessionStart detector
+# ═══════════════════════════════════════════════════════════════
+# Regenerate ENVIRONMENT on a toolchain change. Also regenerates the
+# deterministic Map when NO `[map].command` is configured (the public
+# default — one cheap hook does both). When a map command IS set, the
+# Map is owned by the SessionEnd `map_refresh`, so this leaves it alone
+# and never stomps a model-written map with the deterministic render.
+# ═══════════════════════════════════════════════════════════════
+def refresh(root: pathlib.Path, config: dict | None = None) -> str:
+    if config is None:
+        config = _root.load_config(root)
+    has_cmd = bool(config.get("map", {}).get("command"))
+    label = "Environment" if has_cmd else "Environment + Map"
+    return _refresh(
+        root, config, do_env=True, do_map=not has_cmd, force_map=False, label=label
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# map_refresh() — the SessionEnd detector (run via `repolens map`/`tidy`)
+# ═══════════════════════════════════════════════════════════════
+# Regenerate the MAP on a folder/DB change — model-written when
+# `[map].command` is set, else deterministic. `force` ignores the
+# map-key (a manual `repolens map --force`).
+# ═══════════════════════════════════════════════════════════════
+def map_refresh(
+    root: pathlib.Path, config: dict | None = None, force: bool = False
+) -> str:
+    return _refresh(
+        root, config, do_env=False, do_map=True, force_map=force, label="Map"
+    )

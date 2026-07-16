@@ -79,6 +79,15 @@ DEFAULT_CONFIG = """\
 # [enrich.keys]                                        # write into YOUR schema's field names
 # description = "summary"                              # (default: the kind name)
 # tags = "keywords"
+
+# `[map]` — OPT-IN: let a model WRITE the rule's Map section instead of the
+# deterministic render. `command` takes the folder facts on stdin and prints a rich
+# "what lives here" map (e.g. `claude -p --model sonnet`). Empty (default) = the
+# deterministic map, no model needed. When set, `repolens init`/`hook` also wires a
+# SessionEnd `repolens tidy` (enrich + map) so the map rebuilds on a folder change.
+# [map]
+# command = "claude -p --model sonnet"   # any CLI: folder facts on stdin -> map body on stdout
+# enabled = true
 """
 
 
@@ -162,26 +171,55 @@ GEN_ENV_START = "<!-- repolens:env:start -->"
 GEN_ENV_END = "<!-- repolens:env:end -->"
 GEN_MAP_START = "<!-- repolens:map:start -->"
 GEN_MAP_END = "<!-- repolens:map:end -->"
+# Two independent change-keys so each generated block regenerates on ITS OWN signal:
+# env-key (toolchain) drives the SessionStart Env refresh; map-key (folder-set + DB
+# schema) drives the SessionEnd Map regen. A tool-version bump never triggers a
+# (possibly AI, possibly costly) Map rebuild, and a new folder never rewrites Env.
+ENV_KEY_PREFIX = "<!-- repolens:env-key:"  # + <hash> + " -->"
+MAP_KEY_PREFIX = "<!-- repolens:map-key:"  # + <hash> + " -->"
+# Legacy single-key marker (pre-key-split rules) — still recognized so an older rule
+# self-heals: absence of the two new markers is treated as "changed" and upgrades it.
 CHANGE_KEY_PREFIX = "<!-- repolens:change-key:"  # + <hash> + " -->"
 
 _RULE_HEADER_TMPL = """\
 # RepoLens — {name}
 
-This repo is indexed by **repolens** — hybrid (BM25 + semantic) ranked search over its
-docs, code purpose-lines, and DB schema, plus a self-refreshing map of the repo. The
-index self-maintains, so results are always current.
+You're working in a repo indexed by **repolens**. If you've never seen it, read this once:
+repolens is a local command-line tool that keeps a fast, always-current search index and a
+live map of THIS repo, so you can jump straight to the right file instead of guessing or
+grepping the whole tree. This top section explains the tool; the two generated sections at
+the bottom (Environment, Map) describe the actual repo you're in.
 
-- **What** — a self-maintaining index + ranked/semantic search + a live map of this repo.
-- **When** — reach for `repolens find "<concept>"` whenever you need to find where
-  something lives or search the corpus by meaning, _before_ grepping around. Already
-  know the exact string, or need every match? Use `rg`.
-- **Who** — you, the agent working this repo on the user's behalf.
-- **Why** — it searches by meaning and ranked relevance across the whole corpus (docs +
-  code + DB schema), more reliable than grep for "where is X".
-- **Where** — this repo. The generated sections below carry the exact toolchain
-  (Environment) and where things live (Map), so you're never blind to the repo you're in.
+## What repolens is
 
-Routing rule: **concept / where-is-X → `repolens find`; exact known string / every match → `rg`.**
+One index over the repo's **docs, code purpose-lines, and database schema**, with search
+and a map built on top. It runs locally, needs no server, and **self-maintains**: every
+search first re-indexes any changed files, so results are never stale. Search is hybrid —
+exact keyword ranking (BM25 / SQLite FTS5) and, when enabled, semantic vector search —
+fused, so a query by *meaning* finds the right file even when your words aren't its text.
+
+## How to use it
+
+- **`repolens find "<what you're after>"`** — the default for "where does X live?" or
+  "which file handles Y?". Say the concept in plain words; it returns the few most relevant
+  files, ranked, each with a one-line description. Reach for this BEFORE reading around the
+  tree or broad-grepping — it's more reliable than grep for "where is X".
+- **`rg` (ripgrep) / grep** — when you already know the exact string, or need EVERY match.
+  repolens ranks and narrows to the best few; rg enumerates them all. Different jobs.
+- **`repolens lint`** — corpus hygiene (dead links, malformed frontmatter) before a commit.
+
+**Routing rule: concept / "where is X" → `repolens find`; exact known string / every
+occurrence → `rg`.**
+
+## The two generated sections below (repolens refreshes them — don't hand-edit)
+
+- **Environment** — the repo's real, present toolchain (languages, tools, versions), probed
+  from the machine. Trust it over assumptions about what's installed here.
+- **Map** — where things live: each indexed folder and what it holds. Regenerated whenever
+  the repo's structure changes, so it reflects the repo as it is right now.
+
+Environment tells you what you can run, Map tells you where to look, and `repolens find`
+takes you to the exact file.
 
 {marker}
 """

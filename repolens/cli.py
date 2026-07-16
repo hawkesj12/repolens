@@ -228,11 +228,11 @@ def cmd_enrich(args) -> int:
 
 
 def cmd_hook(args) -> int:
-    r, _cfg = _ctx()
+    r, cfg = _ctx()
     if args.install or args.check:
-        print(hookgen.install(r, check=args.check))
+        print(hookgen.install(r, check=args.check, config=cfg))
     else:
-        print(hookgen.snippet())
+        print(hookgen.snippet(cfg))
     return 0
 
 
@@ -249,6 +249,34 @@ def cmd_refresh(args) -> int:
     r, cfg = _ctx()
     msg = ruledoc.refresh(r, cfg)
     print(msg or "repolens rule up to date (no structural change).")
+    return 0
+
+
+def cmd_map(args) -> int:
+    r, cfg = _ctx()
+    msg = ruledoc.map_refresh(r, cfg, force=args.force)
+    print(msg or "map up to date (no folder/DB change).")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# cmd_tidy()
+# ═══════════════════════════════════════════════════════════════
+# SessionEnd maintenance, each step gated: enrich fill-only (only when
+# an explicit [enrich].command provider is configured, so an
+# unconfigured repo never attempts failed model calls at every exit),
+# THEN map (model-written when [map].command is set, else deterministic;
+# map-key gated). enrich runs first so the map-writer sees fresh
+# descriptions. Both are ~no-ops when nothing changed.
+# ═══════════════════════════════════════════════════════════════
+def cmd_tidy(args) -> int:
+    r, cfg = _ctx()
+    if cfg["enrich"].get("command"):
+        docs, code = enrich.enrich_repo(r, cfg)
+        if docs or code:
+            print(f"enrich: {len(docs)} docs · {len(code)} code")
+    msg = ruledoc.map_refresh(r, cfg)
+    print(msg or "map up to date (no folder/DB change).")
     return 0
 
 
@@ -346,9 +374,24 @@ def main(argv=None) -> int:
 
     p_refresh = sub.add_parser(
         "refresh",
-        help="regenerate the rule's Map/Environment when structure changed (SessionStart hook)",
+        help="regenerate the rule's Environment (+ deterministic Map) when structure changed (SessionStart hook)",
     )
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_map = sub.add_parser(
+        "map",
+        help="regenerate the rule's Map when folders/DB changed — model-written if [map].command is set",
+    )
+    p_map.add_argument(
+        "--force", action="store_true", help="regenerate even if unchanged"
+    )
+    p_map.set_defaults(func=cmd_map)
+
+    p_tidy = sub.add_parser(
+        "tidy",
+        help="SessionEnd maintenance: enrich (if configured) then map — each gated",
+    )
+    p_tidy.set_defaults(func=cmd_tidy)
 
     p_enrich = sub.add_parser(
         "enrich",
