@@ -11,8 +11,8 @@ Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-cod
 1. **Install once, globally.** `pipx install repolens` puts the `repolens` CLI on your PATH. One time, ever. (Semantic search is an opt-in extra: `pipx install 'repolens[semantic]'`.)
 
 2. **`repolens init` once per repo.** Run it in each repo you want indexed. It creates two things:
-   - **`.repometa.toml`** — the config: what to index, ranking + semantic settings. Auto-discovers any SQLite DBs and wires their schema in.
-   - **`.repometa/index.db`** — the search index itself, a **disposable, gitignored cache** that self-refreshes and can't drift. Delete it and it rebuilds; it's never committed.
+   - **`.repolens.toml`** — the config: what to index, ranking + semantic settings. Auto-discovers any SQLite DBs and wires their schema in.
+   - **`.repolens/index.db`** — the search index itself, a **disposable, gitignored cache** that self-refreshes and can't drift. Delete it and it rebuilds; it's never committed.
 
 3. **`repolens find "…"` — self-refreshing.** Every search re-indexes any changed files first, then searches, so results are never stale. You never manually rebuild.
 
@@ -73,7 +73,7 @@ Requires Python 3.11+. The `[semantic]` extra adds `fastembed` (ONNX embeddings,
 
 ```sh
 cd your-repo
-repolens init                 # writes .repometa.toml + .gitignore + a warm index + the pre-commit lint hook,
+repolens init                 # writes .repolens.toml + .gitignore + a warm index + the pre-commit lint hook,
                               # and auto-discovers your DBs. --no-db opts out of discovery.
 repolens index                # rebuild/update the index (incremental; a disposable cache)
 repolens find "where's the deploy config"
@@ -81,7 +81,7 @@ repolens bench                # score hybrid vs lexical on the committed gold se
 repolens lint                 # corpus hygiene + typed-record checks
 ```
 
-## Configure (`.repometa.toml`)
+## Configure (`.repolens.toml`)
 
 `repolens init` drops a commented starter. Declare your typed records by folder:
 
@@ -123,7 +123,7 @@ Because every `find` re-indexes changed files first, the agent's answers are nev
 
 ## How the index stays correct
 
-The index (`.repometa/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. WAL is what lets many agent sessions read (and the odd one refresh) the same index concurrently without locking each other out. With the `[semantic]` extra installed, the same content-hash drives embeddings — a changed file is re-chunked (**section-bounded**: chunks split on Markdown headings and never cross one, ~512 tokens each) and re-embedded, its vectors stored via `sqlite-vec` (or the numpy fallback); `find` fuses the BM25 and dense results with RRF, rolling per-chunk hits up to their parent document. A deleted file's chunks/vectors cascade away. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
+The index (`.repolens/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. WAL is what lets many agent sessions read (and the odd one refresh) the same index concurrently without locking each other out. With the `[semantic]` extra installed, the same content-hash drives embeddings — a changed file is re-chunked (**section-bounded**: chunks split on Markdown headings and never cross one, ~512 tokens each) and re-embedded, its vectors stored via `sqlite-vec` (or the numpy fallback); `find` fuses the BM25 and dense results with RRF, rolling per-chunk hits up to their parent document. A deleted file's chunks/vectors cascade away. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
 
 ## Roadmap
 

@@ -1,5 +1,5 @@
 # repolens index cache — regenerated from the filesystem, never committed
-.repometa/
+.repolens/
 
 # Python
 __pycache__/

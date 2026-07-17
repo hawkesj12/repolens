@@ -1,7 +1,7 @@
 """repolens.root — find the repo root and load its config.
 
 Portability keystone: no path is ever hardcoded. The repo root is the nearest
-ancestor of the working directory containing `.repometa.toml` (the config
+ancestor of the working directory containing `.repolens.toml` (the config
 marker), else `.git`, else the cwd itself. Resolution is anchored ONLY to the
 user's cwd (never the install location) so an editable / venv-in-repo install
 can't resolve the wrong repo. Config is parsed with stdlib tomllib (3.11+) and
@@ -18,10 +18,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-CONFIG_NAME = ".repometa.toml"
+CONFIG_NAME = ".repolens.toml"
 
 # Generic defaults — nothing repo-specific. Consumers EXTEND skip_dirs via config.
-DEFAULT_INDEX_PATH = ".repometa/index.db"
+DEFAULT_INDEX_PATH = ".repolens/index.db"
 DEFAULT_SKIP_DIRS = {
     ".git",
     ".hg",
@@ -35,7 +35,7 @@ DEFAULT_SKIP_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     ".mypy_cache",
-    ".repometa",
+    ".repolens",
     ".idea",
     ".vscode",
 }
@@ -97,7 +97,7 @@ __all__ = [
 # find_root()
 # ═══════════════════════════════════════════════════════════════
 # Resolve the repo root: nearest ancestor of `start` (default the
-# cwd) containing .repometa.toml, else .git, else the cwd. Anchored
+# cwd) containing .repolens.toml, else .git, else the cwd. Anchored
 # only to the user's location — NEVER __file__ (the install dir),
 # so an editable/venv-in-repo install can't resolve the wrong repo.
 # ═══════════════════════════════════════════════════════════════
@@ -118,7 +118,7 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
 # ═══════════════════════════════════════════════════════════════
 # load_config()
 # ═══════════════════════════════════════════════════════════════
-# Parse <root>/.repometa.toml and merge over defaults. Returns a dict:
+# Parse <root>/.repolens.toml and merge over defaults. Returns a dict:
 #   index_path (Path, absolute), skip_dirs (set), skip_files (set),
 #   code_exts (set), types (dict name->{folder,recursive,exclude}),
 #   sqlite_paths (list[Path] — the optional DB-table integration, empty

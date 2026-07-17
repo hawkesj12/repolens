@@ -47,6 +47,15 @@ All notable changes to this project are documented here. The format follows
   fewer, cleaner pieces after the fix). Heading detection is now suspended inside a
   fence.
 
+### Changed
+
+- **Renamed the on-disk footprint `.repometa` → `.repolens`.** The config file is now
+  `.repolens.toml` and the disposable index cache is `.repolens/` (was `.repometa.toml`
+  / `.repometa/`) — one consistent name matching the tool. The cache is gitignored and
+  regenerates, so no data migration is needed; an existing repo just needs its config
+  renamed (`git mv .repometa.toml .repolens.toml`) and the stale `.repometa/` removed on
+  the next `repolens index`.
+
 ### Removed
 
 - **The agent-orientation machinery — `repolens` is now search + lint, one thing done

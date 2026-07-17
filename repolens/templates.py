@@ -11,7 +11,7 @@ DEFAULT_CONFIG = """\
 # Docs: https://github.com/hawkesj12/repolens
 
 [repolens]
-# index_path = ".repometa/index.db"   # default; a gitignored, disposable cache
+# index_path = ".repolens/index.db"   # default; a gitignored, disposable cache
 # skip_dirs = ["build", "vendor"]      # ADDED to sensible defaults (.git, node_modules, ...)
 # skip_files = ["CHANGELOG.md"]
 # code_exts = [".py", ".ts", ".go"]    # override the default code-file extensions

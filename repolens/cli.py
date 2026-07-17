@@ -28,7 +28,7 @@ def _ctx():
 # ═══════════════════════════════════════════════════════════════
 # cmd_init()
 # ═══════════════════════════════════════════════════════════════
-# Scaffold a repo: write .repometa.toml (marks the root), auto-wire
+# Scaffold a repo: write .repolens.toml (marks the root), auto-wire
 # any SQLite DBs, gitignore the index cache, install the pre-commit
 # lint hook if this is a git repo, then warm-build the index.
 # Idempotent unless --force.
@@ -60,7 +60,7 @@ def cmd_init(args) -> int:
     print(f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms")
 
     gi = r / ".gitignore"
-    line = ".repometa/"
+    line = ".repolens/"
     existing = gi.read_text(encoding="utf-8") if gi.exists() else ""
     if line not in existing:
         with open(gi, "a", encoding="utf-8") as f:
@@ -203,7 +203,7 @@ def main(argv=None) -> int:
 
     p_init = sub.add_parser(
         "init",
-        help="scaffold .repometa.toml + gitignore + warm index + pre-commit lint hook",
+        help="scaffold .repolens.toml + gitignore + warm index + pre-commit lint hook",
     )
     p_init.add_argument("--force", action="store_true", help="overwrite existing files")
     p_init.add_argument(

@@ -45,7 +45,7 @@ def _mkdb(path, tables):
 
 
 def _repo(tmp_path, toml="", files=None):
-    (tmp_path / ".repometa.toml").write_text(toml)
+    (tmp_path / ".repolens.toml").write_text(toml)
     for rel, body in (files or {}).items():
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ recursive = false
 
 # ── root + config ──────────────────────────────────────────────
 def test_find_root_via_marker(tmp_path):
-    (tmp_path / ".repometa.toml").write_text("")
+    (tmp_path / ".repolens.toml").write_text("")
     sub = tmp_path / "a" / "b"
     sub.mkdir(parents=True)
     assert root.find_root(sub) == tmp_path.resolve()
@@ -76,7 +76,7 @@ def test_find_root_via_marker(tmp_path):
 
 def test_load_config_defaults_and_parse(tmp_path):
     _root, cfg = _repo(tmp_path, TYPES_TOML)
-    assert cfg["index_path"] == tmp_path / ".repometa/index.db"
+    assert cfg["index_path"] == tmp_path / ".repolens/index.db"
     assert ".git" in cfg["skip_dirs"]  # defaults present
     assert cfg["types"]["note"]["recursive"] is True
     assert cfg["types"]["note"]["require"] == ["^\\*\\*Date:\\*\\*"]
@@ -84,7 +84,7 @@ def test_load_config_defaults_and_parse(tmp_path):
 
 
 def test_find_root_ignores_install_dir(tmp_path, monkeypatch):
-    # A dir with .git but no .repometa.toml, entered as cwd, must resolve to
+    # A dir with .git but no .repolens.toml, entered as cwd, must resolve to
     # ITSELF — never to the repolens install dir (the __file__ footgun). This
     # is the panel's confirmed blocker: an editable/venv-in-repo install must
     # not leak the wrong repo.
@@ -177,14 +177,14 @@ def test_build_atomic_single_docs_table(tmp_path):
     )
     n, code, tables, ms = index.build(tmp_path, cfg)
     assert n >= 1 and code >= 1
-    assert not list((tmp_path / ".repometa").glob("*.tmp-*"))
+    assert not list((tmp_path / ".repolens").glob("*.tmp-*"))
     con = sqlite3.connect(cfg["index_path"])
     names = {
         r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     # v0.5 schema: docs + the incremental/frontmatter bookkeeping tables
     assert {"docs", "files", "frontmatter", "meta"} <= names
-    assert not list((tmp_path / ".repometa").glob("*.tmp-*"))  # temp swapped away
+    assert not list((tmp_path / ".repolens").glob("*.tmp-*"))  # temp swapped away
     kinds = {r[0] for r in con.execute("SELECT DISTINCT kind FROM docs")}
     assert "md" in kinds and "code" in kinds
     con.close()
@@ -343,7 +343,7 @@ def test_cmd_init_wires_discovered_db(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
     _mkdb(tmp_path / "data/app.db", ["users", "orders"])
     cli.main(["init"])
-    cfg_text = (tmp_path / ".repometa.toml").read_text()
+    cfg_text = (tmp_path / ".repolens.toml").read_text()
     assert 'paths = ["data/app.db"]' in cfg_text
     assert root.load_config(tmp_path)["sqlite_paths"] == [tmp_path / "data/app.db"]
     assert "found data/app.db (2 tables)" in capsys.readouterr().out
@@ -354,16 +354,16 @@ def test_cmd_init_no_db_skips_discovery(tmp_path, monkeypatch):
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init", "--no-db"])
     # no ACTIVE block appended (the template's own block is commented: "# [")
-    assert "\n[integrations.sqlite]" not in (tmp_path / ".repometa.toml").read_text()
+    assert "\n[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
     assert root.load_config(tmp_path)["sqlite_paths"] == []
 
 
 def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
-    (tmp_path / ".repometa.toml").write_text("[repolens]\n")
+    (tmp_path / ".repolens.toml").write_text("[repolens]\n")
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init"])  # config exists, no --force → no discovery/append
-    assert "[integrations.sqlite]" not in (tmp_path / ".repometa.toml").read_text()
+    assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
 
 
 # ── digest ─────────────────────────────────────────────────────

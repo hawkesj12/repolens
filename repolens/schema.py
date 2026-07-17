@@ -1,7 +1,7 @@
 """repolens.schema — deterministic, config-driven classifier + typed validation.
 
 Zero AI. A doc's type comes from an explicit frontmatter `type:` if present, else
-from its folder (per `.repometa.toml`, recursively, minus `exclude` globs). Each
+from its folder (per `.repolens.toml`, recursively, minus `exclude` globs). Each
 type may declare `require` — regex patterns a conforming doc must contain (e.g.
 `^\\*\\*Date:\\*\\*` for a meeting note, or `^status:` for a frontmatter key). None
 of this is repo-specific: the types and their requirements live entirely in config.
