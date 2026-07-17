@@ -53,6 +53,12 @@ per sub-bullet, never one long run-on sentence. Example:
     - short plain statement of what the folder is
     - a notable group or item, named: foo, bar, baz
     - another grouping, named — one line, scannable
+
+Before you print, check your draft against the folder list above: every folder \
+present and none invented; each backtick token and count byte-identical; same order; \
+and zero lines outside the bullet structure (no heading, preamble, fence, or sign-off). \
+Fix any miss, then print — a stray line makes repolens reject the whole output and fall \
+back to the thin deterministic map.
 """
 
 
