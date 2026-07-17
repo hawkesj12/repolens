@@ -23,16 +23,6 @@ import sys
 import time
 
 from . import frontmatter, purpose, semantic
-from . import root as _root
-
-
-def _self_rule_rel(root: pathlib.Path) -> str:
-    # repolens's OWN generated rule (ruledoc.py writes this), relative to root — a
-    # derived artifact, never source. Skipping it keeps repolens from indexing its own
-    # output (a noise ".claude/" folder in the map + change-key churn). Handles a repo
-    # rooted AT .claude, where the rule is `rules/repolens.md`, not `.claude/rules/...`.
-    rule = _root.claude_dir(root) / "rules" / "repolens.md"
-    return str(rule.relative_to(root)).replace("\\", "/")
 
 
 def _first_heading(text: str) -> str:
@@ -85,7 +75,6 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
     skip_dirs, skip_files = config["skip_dirs"], config["skip_files"]
     exts = config["code_exts"]
     allowed = _not_ignored(root, config)  # None = index all (see docstring)
-    self_rule = _self_rule_rel(root)  # repolens's own generated rule — never index it
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in skip_dirs]
         for fn in fns:
@@ -95,7 +84,7 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
                 if p.is_symlink():
                     continue  # never follow a symlink out of the repo (leak surface)
                 rel = str(p.relative_to(root))
-                if rel in skip_files or rel.replace("\\", "/") == self_rule:
+                if rel in skip_files:
                     continue
                 if allowed is not None and rel not in allowed:
                     continue  # gitignored — skipped by default (see _not_ignored)

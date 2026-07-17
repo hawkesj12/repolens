@@ -47,6 +47,23 @@ All notable changes to this project are documented here. The format follows
   fewer, cleaner pieces after the fix). Heading detection is now suspended inside a
   fence.
 
+### Removed
+
+- **The agent-orientation machinery — `repolens` is now search + lint, one thing done
+  well.** Removed the generated-rule / repo-map subsystem and everything that fed it:
+  the `refresh`, `map`, `rule`, `hook`, `enrich`, `digest`, and `env` subcommands; the
+  `[map]` and `[enrich]` config blocks; and the SessionStart/SessionEnd hook install
+  path. The map tried to keep a frozen "what lives here" blob fresh via a change-key
+  gate, which drifted (folder-granular key vs file-granular content) and — with a
+  `[map].command` set — shelled out to a model from committed config (a code-execution
+  surface). The retrieval half already does this better on demand: `repolens find`
+  answers "where does X live" per query, always current, no stored artifact to rot.
+  `enrich` (model-written metadata) went with it — the semantic tier makes hand-filled
+  descriptions unnecessary for recall. `init` no longer installs any agent config; it
+  scaffolds the config, index, and pre-commit lint hook. The removed code is preserved
+  on the `archive/map-machinery` branch. Distribution is a plain CLI (pipx/PyPI) — not
+  a Claude Code plugin.
+
 ## [0.9.0] — 2026-07-15
 
 The semantic release: `find` becomes hybrid, and the invisible session digest

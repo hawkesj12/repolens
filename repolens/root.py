@@ -57,10 +57,6 @@ DEFAULT_CODE_EXTS = {
     ".rs",
 }
 
-# Generic default toolchain for `repolens env` when a repo sets no [env].tools
-# and init found no manifests. Kept minimal — NOT an opinionated stack.
-DEFAULT_ENV_TOOLS = ["git", "python", "node"]
-
 # Semantic (hybrid) search defaults. Everything is opt-out-able but ON by default
 # so `repolens[semantic]` "just works" once installed; with the extra ABSENT the
 # subsystem's availability gate makes this inert (find stays lexical-only).
@@ -94,27 +90,7 @@ __all__ = [
     "find_root",
     "load_config",
     "CONFIG_NAME",
-    "claude_dir",
-    "is_claude_repo",
 ]
-
-
-# ═══════════════════════════════════════════════════════════════
-# claude_dir() / is_claude_repo()
-# ═══════════════════════════════════════════════════════════════
-# The Claude Code config dir for a repo: `<root>/.claude` normally, but
-# `<root>` ITSELF when the repo IS a `.claude` directory (e.g. installing
-# into ~/.claude — where `<root>/.claude` would be the nonexistent
-# `~/.claude/.claude`, silently skipping the hook + rule). is_claude_repo
-# gates whether init wires the SessionStart hook + the agent rule.
-# ═══════════════════════════════════════════════════════════════
-def claude_dir(root: pathlib.Path | str) -> pathlib.Path:
-    root = pathlib.Path(root)
-    return root if root.name == ".claude" else root / ".claude"
-
-
-def is_claude_repo(root: pathlib.Path | str) -> bool:
-    return claude_dir(root).is_dir()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -147,8 +123,7 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
 #   code_exts (set), types (dict name->{folder,recursive,exclude}),
 #   sqlite_paths (list[Path] — the optional DB-table integration, empty
 #   unless [integrations.sqlite] sets `paths` and/or the legacy `path`),
-#   env_tools (list[str] — the `repolens env` toolchain allowlist, from
-#   [env].tools else DEFAULT_ENV_TOOLS).
+#   semantic (dict — the hybrid-search tier config).
 # A missing config / no tomllib → pure defaults (repo still indexes).
 # ═══════════════════════════════════════════════════════════════
 def load_config(root: pathlib.Path | str | None = None) -> dict:
@@ -201,40 +176,6 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
                     seen.add(resolved)
                     sqlite_paths.append(root / rel)
 
-    # Toolchain allowlist for `repolens env` — [env].tools, else the generic default.
-    env = data.get("env", {})
-    env_tools = (
-        list(env.get("tools", DEFAULT_ENV_TOOLS))
-        if isinstance(env, dict)
-        else list(DEFAULT_ENV_TOOLS)
-    )
-
-    # `repolens enrich` — bring-your-own local model (ollama shape by default).
-    # `keys` optionally renames the OUTPUT frontmatter field per kind, so enrich
-    # writes into a repo's own schema (e.g. description -> summary) instead of
-    # imposing its names. Defaults to the kind name.
-    en = data.get("enrich", {})
-    en = en if isinstance(en, dict) else {}
-    raw_keys = en.get("keys") if isinstance(en.get("keys"), dict) else {}
-    enrich = {
-        "model": str(en.get("model", "llama3.2")),
-        "endpoint": str(en.get("endpoint", "http://localhost:11434/api/generate")),
-        "command": str(en["command"]) if en.get("command") else "",
-        "fields": list(en.get("fields", ["description", "tags"])),
-        "keys": {k: str(v) for k, v in raw_keys.items() if isinstance(v, str)},
-    }
-
-    # `[map]` — the SessionEnd map-writer provider (bring-your-own-model, like
-    # [enrich]). `command` (empty by default) is any CLI that takes the folder facts
-    # on stdin and prints a rich Map body — e.g. `claude -p --model sonnet`. Empty =>
-    # the deterministic Map render (the public, no-model default). `enabled` gates it.
-    mp = data.get("map", {})
-    mp = mp if isinstance(mp, dict) else {}
-    mapcfg = {
-        "command": str(mp["command"]) if mp.get("command") else "",
-        "enabled": bool(mp.get("enabled", True)),
-    }
-
     # `[semantic]` — the hybrid-search tier. Merged over DEFAULT_SEMANTIC so a
     # missing block gives working defaults and a partial block overrides only its
     # keys. Types are coerced defensively (a bad value falls back to the default).
@@ -266,10 +207,7 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "code_exts": code_exts,
         "types": types,
         "sqlite_paths": sqlite_paths,
-        "env_tools": env_tools,
         "include_gitignored": include_gitignored,
         "max_file_bytes": max_file_bytes,
-        "enrich": enrich,
         "semantic": semantic,
-        "map": mapcfg,
     }
