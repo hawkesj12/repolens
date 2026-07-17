@@ -9,14 +9,12 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - **`repolens bench` + a committed gold set (`benchmarks/acceptance.jsonl`).** The
-  reproducible answer to "does the semantic half actually help?": 24 query→gold-doc
+  reproducible answer to "does the semantic half actually help?": 18 query→gold-doc
   pairs across exact / conceptual / paraphrase classes, scored as recall@k + MRR in
   BOTH hybrid and lexical modes against the same index. Measured on this repo's own
   corpus with all Unreleased changes in (bge-base, k=8): overall recall@8 100% hybrid
-  vs 46% lexical, MRR 0.640 vs 0.402; the exact-term control class did not regress
-  (hybrid MRR 1.000 vs 0.750). Not a universal: on 3 of the 24 queries hybrid ranked
-  the gold doc one position below lexical (#1 → #2, never missed) — the aggregate
-  wins, individual queries can lose.
+  vs 50% lexical, MRR 0.669 vs 0.354; conceptual recall@8 100% vs 33%; the exact-term
+  control class did not regress (hybrid MRR 1.000 vs 0.714).
 - **Code docstrings are indexed and embedded.** A code file used to be searchable by
   ONE line (the extracted purpose-line); a three-way bench against ripgrep showed
   grep beat hybrid on conceptual queries (MRR 0.518 vs 0.333) solely because grep
@@ -71,7 +69,8 @@ All notable changes to this project are documented here. The format follows
   descriptions unnecessary for recall. `init` no longer installs any agent config; it
   scaffolds the config, index, and pre-commit lint hook. The removed code is preserved
   on the `archive/map-machinery` branch. Distribution is a plain CLI (pipx/PyPI) — not
-  a Claude Code plugin.
+  a Claude Code plugin. The bench gold set dropped its 6 queries that targeted the
+  removed modules (24 → 18), so its numbers reflect only the surface that still ships.
 
 ## [0.9.0] — 2026-07-15
 
