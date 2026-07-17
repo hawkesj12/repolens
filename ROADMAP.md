@@ -7,9 +7,6 @@ repolens is intentionally small — **ranked hybrid search + a typed hygiene lin
 - **Cross-encoder reranker** over the fused top-N (highest-ROI retrieval upgrade;
   `fastembed` ships rerank models). Then **contextual retrieval** (a one-sentence
   per-chunk blurb before indexing) — deferred because it needs a per-chunk LLM call.
-- **`find --snippet`** — print the best matching chunk's text alongside each hit, so a
-  caller gets the passage, not just the file path. (repolens already chunks internally
-  for the semantic tier; this surfaces it.)
 
 ## Later / maybe
 

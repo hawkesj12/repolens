@@ -21,7 +21,7 @@ That's the whole model: **`pipx install` once → `repolens init` per repo → `
 ## What it does
 
 **`repolens find "…"` — where does X live?**
-Builds a local SQLite index and answers ranked queries with a one-line description per hit. Ranking is **hybrid**: BM25 (FTS5) for exact-term/identifier precision, fused with dense semantic similarity for paraphrase/meaning recall, combined by Reciprocal Rank Fusion (RRF). With the `[semantic]` extra absent it's BM25-only (and says so once); `--lexical` forces BM25-only on demand.
+Builds a local SQLite index and answers ranked queries with a one-line description **and the passage that matched** per hit — so you get the relevant text, not just a file path. Ranking is **hybrid**: BM25 (FTS5) for exact-term/identifier precision, fused with dense semantic similarity for paraphrase/meaning recall, combined by Reciprocal Rank Fusion (RRF). With the `[semantic]` extra absent it's BM25-only (and says so once); `--lexical` forces BM25-only on demand.
 
 - **Markdown** — full text.
 - **Code / config** — indexed by each file's _purpose line_ (from its docstring or leading comment), so `repolens find "garmin ingest"` returns `scripts/ingest_garmin.py — "Pulls Garmin biometrics into the DB"`, not a wall of matches. The full module docstring is indexed too (BM25 + embedded), so a conceptual query finds the file even when your words aren't in its one-line purpose.

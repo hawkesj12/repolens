@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`find` shows the matching passage with each hit.** A result now carries the
+  passage that actually matched, not just the file path — a semantic hit shows its
+  best-matching chunk, a lexical hit shows the FTS5 excerpt around the terms, trimmed
+  to one line. The winning chunk was already found and stored; the per-doc rollup was
+  discarding it. `cmd_find` prints it under each hit; `--json` gains a `snippet` field.
 - **`repolens bench` + a committed gold set (`benchmarks/acceptance.jsonl`).** The
   reproducible answer to "does the semantic half actually help?": 18 query→gold-doc
   pairs across exact / conceptual / paraphrase classes, scored as recall@k + MRR in
