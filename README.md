@@ -115,11 +115,11 @@ An explicit `type:` in a doc's YAML frontmatter overrides the folder rule.
 
 ## Use with an agent
 
-repolens is a plain CLI, so any agent that can run a shell command can use it — nothing to wire up. The pattern that works well with [Claude Code](https://claude.com/claude-code) is a one-line routing rule in the repo (e.g. a `.claude/rules/` file or `AGENTS.md`):
+repolens is a plain CLI, so any agent that can run a shell command can use it — nothing to wire up. Drop a short routing rule into the repo (a `.claude/rules/` file for [Claude Code](https://claude.com/claude-code), or `AGENTS.md`) so the agent reaches for it:
 
-> **concept / "where is X" → `repolens find "<idea>"`; exact known string / every occurrence → `rg`.**
+> **Default to `repolens find "<what you're after>"` to locate anything. Use `rg` / grep only for an exact string you need _every_ match of, or a regex.**
 
-Because every `find` re-indexes changed files first, the agent's answers are never stale, and because the index respects `.gitignore`, no file contents or secrets leave the machine — `find` returns repo-relative _paths_, which the agent then reads with its own tools.
+A ready-to-drop version is in [`docs/agent-rule-template.md`](docs/agent-rule-template.md). Every `find` re-indexes changed files first, so the agent's answers are never stale, and each hit comes back with the passage that matched — the agent gets the text, then reads the file with its own tools if it needs more. Because the index respects `.gitignore`, no ignored file contents leave the machine.
 
 ## How the index stays correct
 
