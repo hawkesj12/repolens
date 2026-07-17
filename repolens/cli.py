@@ -1,4 +1,4 @@
-"""repolens.cli — the `repolens` command: init | index | find | lint | digest | env | hook."""
+"""repolens.cli — the `repolens` command: init | index | find | bench | lint | digest | env | hook."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import time
 
 from . import (
     __version__,
+    bench,
     digest,
     discover,
     enrich,
@@ -133,6 +134,39 @@ def cmd_index(args) -> int:
     if args.optimize:
         index.optimize(cfg)
         print("optimized index")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# cmd_bench()
+# ═══════════════════════════════════════════════════════════════
+# Score hybrid vs lexical `find` on the committed gold set
+# (benchmarks/acceptance.jsonl by default): recall@k + MRR per
+# query-class, both modes against the same fresh index.
+# ═══════════════════════════════════════════════════════════════
+def cmd_bench(args) -> int:
+    r, cfg = _ctx()
+    gold_path = r / args.set
+    if not gold_path.exists():
+        print(f"gold set not found: {gold_path}", file=sys.stderr)
+        return 1
+    try:
+        gold = bench.load_gold(gold_path)
+    except ValueError as e:
+        print(f"bad gold set: {e}", file=sys.stderr)
+        return 1
+    try:
+        find.ensure_fresh(r, cfg)
+    except Exception as e:  # noqa: BLE001 — degrade, don't crash the bench
+        print(
+            f"⚠ index refresh failed ({e}) — benchmarking the existing index",
+            file=sys.stderr,
+        )
+    result = bench.run(cfg, gold, args.k)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(bench.format_report(result))
     return 0
 
 
@@ -334,6 +368,18 @@ def main(argv=None) -> int:
         help="BM25-only (skip the semantic half of the hybrid search)",
     )
     p_find.set_defaults(func=cmd_find)
+
+    p_bench = sub.add_parser(
+        "bench", help="score hybrid vs lexical find on the committed gold set"
+    )
+    p_bench.add_argument(
+        "--set",
+        default="benchmarks/acceptance.jsonl",
+        help="gold-set JSONL path, relative to the repo root (default benchmarks/acceptance.jsonl)",
+    )
+    p_bench.add_argument("--k", type=int, default=8, help="rank cutoff (default 8)")
+    p_bench.add_argument("--json", action="store_true")
+    p_bench.set_defaults(func=cmd_bench)
 
     p_lint = sub.add_parser("lint", help="corpus hygiene + typed-record checks")
     p_lint.add_argument("--json", action="store_true")

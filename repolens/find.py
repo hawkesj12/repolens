@@ -28,6 +28,7 @@ _WEIGHTS = "bm25(docs, 5.0, 10.0, 4.0, 1.0)"
 _RRF_K = 60
 
 _lexical_note_shown = False
+_dense_failed_note_shown = False
 
 __all__ = ["ensure_fresh", "search"]
 
@@ -161,6 +162,20 @@ def _note_lexical_only() -> None:
     )
 
 
+def _note_dense_failed(err: Exception) -> None:
+    # The tier IS installed but embedding the query failed at search time (e.g. a
+    # bring-your-own http endpoint is down). Degrade to lexical for this search and say
+    # so once — distinct from _note_lexical_only (which means "extra not installed").
+    global _dense_failed_note_shown
+    if _dense_failed_note_shown:
+        return
+    _dense_failed_note_shown = True
+    print(
+        f"ℹ semantic query-embedding failed ({err}) — lexical-only for this search",
+        file=sys.stderr,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════
 # search()
 # ═══════════════════════════════════════════════════════════════
@@ -193,7 +208,18 @@ def search(
         # fuse. Both lists are already per-doc, so RRF is well-defined.
         pool = max(k * 4, 30)
         lex_rows = _lexical_rows(con, query, pool)
-        dense = semantic.knn(con, query, pool, config)  # [(relpath, distance)]
+        try:
+            dense = semantic.knn(con, query, pool, config)  # [(relpath, distance)]
+        except Exception as e:  # noqa: BLE001 — query-time embed failure => degrade
+            # available() passed but the actual embed failed (e.g. a down http
+            # endpoint) — fall back to the same lexical result the pre-flight
+            # branch produces, re-fetched with k (lex_rows above used the pool).
+            _note_dense_failed(e)
+            rows = _lexical_rows(con, query, k)
+            return [
+                {"relpath": r, "title": t, "kind": k_, "score": round(s, 3)}
+                for r, t, k_, s in rows
+            ]
 
         meta = {r[0]: (r[1], r[2]) for r in lex_rows}  # relpath -> (title, kind)
         scores = _rrf_scores([r[0] for r in lex_rows], [rp for rp, _d in dense])

@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["extract_purpose", "MAX_LEN"]
+__all__ = ["extract_purpose", "extract_doc", "MAX_LEN", "DOC_MAX_CHARS"]
 
 MAX_LEN = 200  # a purpose line is a hint, not a paragraph
+DOC_MAX_CHARS = (
+    1500  # the indexed/embedded doc block is a summary surface, not the file
+)
 
 
 def _first_sentence(s: str) -> str:
@@ -103,6 +106,86 @@ def _comment_purpose(
         if not matched and not s.startswith(("/*", "*")):
             break
     return ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# _comment_block()
+# ═══════════════════════════════════════════════════════════════
+# The FULL leading documentation block, where _comment_purpose keeps
+# only the first sentence: a Python module docstring in its entirety,
+# or the contiguous run of leading line-comments (`markers`), or a
+# /* ... */ opener. Shebang-safe; letter-less banner/rule lines are
+# dropped from the output but don't end the block; the first
+# non-comment line does. Returns "" when there's nothing.
+# ═══════════════════════════════════════════════════════════════
+def _comment_block(text: str, markers: tuple[str, ...], docstring: bool = False) -> str:
+    if docstring:
+        head = text
+        if head.startswith("#!"):
+            head = head.split("\n", 1)[1] if "\n" in head else ""
+        head = head.lstrip("\n \t")
+        m = re.match(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, re.S)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    out: list[str] = []
+    started = False
+    in_c = False  # inside a /* ... */ opener
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not started and not in_c and (not s or s.startswith("#!")):
+            continue  # leading blanks / shebang
+        if in_c:
+            piece = (s.split("*/", 1)[0] if "*/" in s else s).strip(" *")
+            if piece and re.search(r"[A-Za-z]", piece):
+                out.append(piece)
+            if "*/" in s:
+                break
+            continue
+        if s.startswith("/*"):
+            started = in_c = True
+            piece = (s.split("*/", 1)[0] if "*/" in s else s).lstrip("/*").strip()
+            if piece and re.search(r"[A-Za-z]", piece):
+                out.append(piece)
+            if "*/" in s:
+                break
+            continue
+        hit = next((mk for mk in markers if s.startswith(mk)), None)
+        if hit is None:
+            break  # first non-comment line (or blank after the block) ends it
+        started = True
+        cleaned = s[len(hit) :].strip()
+        if cleaned and re.search(r"[A-Za-z]", cleaned):
+            out.append(cleaned)
+    return "\n".join(out).strip()
+
+
+# ═══════════════════════════════════════════════════════════════
+# extract_doc()
+# ═══════════════════════════════════════════════════════════════
+# The code file's full documentation block for INDEXING (BM25 body +
+# embedding), capped at max_chars — the display line stays
+# extract_purpose's one-liner. Dispatch mirrors extract_purpose; md
+# returns "" (markdown is indexed full-text elsewhere). Never raises.
+# ═══════════════════════════════════════════════════════════════
+def extract_doc(relpath: str, text: str, max_chars: int = DOC_MAX_CHARS) -> str:
+    ext = ("." + relpath.rsplit(".", 1)[-1].lower()) if "." in relpath else ""
+    try:
+        if ext == ".py":
+            block = _comment_block(text, ("#",), docstring=True)
+        elif ext in (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs"):
+            block = _comment_block(text, ("//",))
+        elif ext == ".sql":
+            block = _comment_block(text, ("--",))
+        elif ext in (".sh", ".bash", ".zsh", ".toml", ".yml", ".yaml", ".rb"):
+            block = _comment_block(text, ("#",))
+        elif ext == ".json":
+            m = re.search(r'"_description"\s*:\s*"([^"]+)"', text)
+            block = m.group(1) if m else ""
+        else:
+            block = ""
+    except Exception:  # noqa: BLE001 — a hint extractor must never break the build
+        return ""
+    return block[:max_chars].rstrip()
 
 
 # ═══════════════════════════════════════════════════════════════

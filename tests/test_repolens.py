@@ -10,6 +10,7 @@ import subprocess
 import pytest
 
 from repolens import (
+    bench,
     chunk,
     cli,
     digest,
@@ -37,8 +38,9 @@ def _semantic_off_by_default(monkeypatch):
     # Keep the suite hermetic + deterministic whether or not the [semantic] extra is
     # installed: the REAL tier is off by default, so `find` stays lexical (matching the
     # pinned rankings) and no index build downloads a model. Semantic tests opt back in
-    # with fake embeddings via _force_blob. The real embedding path is validated end-to-
-    # end by the acceptance bake-off, not here.
+    # with fake embeddings via _force_blob. These tests cover the tier's WIRING (fusion,
+    # KNN, chunking, cascade) with a fake embedder; retrieval QUALITY is not measured here
+    # and has no committed benchmark yet (see CHANGELOG 0.9.0 "Honest status").
     monkeypatch.setattr(semantic, "available", lambda *a, **k: False)
 
 
@@ -153,6 +155,28 @@ def test_purpose_skips_and_docstring():
     assert purpose.extract_purpose("y.md", md) == "The real summary."
     py = '#!/usr/bin/env python3\n"""Ingest Garmin data."""\ndef f():\n    """helper."""\n'
     assert "Garmin" in purpose.extract_purpose("g.py", py)
+
+
+def test_extract_doc_full_docstring_and_blocks():
+    # .py: the FULL module docstring survives, not just sentence one (extract_purpose
+    # keeps the one-liner; extract_doc is what the index/embedder sees).
+    py = '"""First line.\n\nSecond paragraph explains the whole design.\n"""\nx = 1\n'
+    doc = purpose.extract_doc("m.py", py)
+    assert "First line." in doc and "whole design" in doc
+    assert purpose.extract_purpose("m.py", py) == "First line."
+    # .py without a docstring: the contiguous leading # block; banner lines dropped;
+    # the first non-comment line ends the block.
+    py2 = "#!/bin/sh\n# ═══════════\n# alpha tool\n# does beta things\ncode()\n# later comment\n"
+    doc2 = purpose.extract_doc("t.sh", py2)
+    assert doc2 == "alpha tool\ndoes beta things"
+    # .js: // block
+    assert purpose.extract_doc("a.js", "// one\n// two\nlet x\n") == "one\ntwo"
+    # cap enforced
+    long_py = '"""' + ("words " * 600) + '"""\n'
+    assert len(purpose.extract_doc("l.py", long_py)) <= purpose.DOC_MAX_CHARS
+    # garbage / no comments / unknown ext → "" and never raises
+    assert purpose.extract_doc("b.py", "x = 1\n") == ""
+    assert purpose.extract_doc("noext", "\x00\x01junk") == ""
 
 
 # ── index build ────────────────────────────────────────────────
@@ -1080,6 +1104,25 @@ def test_chunk_no_headings_recursive_fallback():
     assert all(len(c) <= 50 * chunk.CHARS_PER_TOKEN for _ix, c in chunks)
 
 
+def test_chunk_fenced_code_comments_are_not_headings():
+    # `#` comment lines inside a ```/~~~ fence are code, not section boundaries —
+    # the splitter used to cut fenced blocks apart at them (finding #383).
+    doc = (
+        "# Real heading\n\nintro prose\n\n"
+        "```python\n# not a heading\nx = 1\n## also not\n```\n\n"
+        "tail prose\n\n## Second heading\n\nmore\n"
+    )
+    chunks = [c for _ix, c in chunk.chunk_document(doc, 512)]
+    # the fenced block survives intact, inside exactly one chunk
+    assert sum("# not a heading" in c and "## also not" in c for c in chunks) == 1
+    # heading detection resumed after the closing fence
+    assert any(c.startswith("## Second heading") for c in chunks)
+    # and the fake headings never started a section
+    assert not any(
+        c.startswith("# not a heading") or c.startswith("## also not") for c in chunks
+    )
+
+
 def test_chunk_never_exceeds_cap():
     # The reproduced overshoot: a re-seeded chunk (overlap tail + next piece) must NOT
     # exceed the cap, or a model at exactly its context limit truncates the tail.
@@ -1326,6 +1369,51 @@ def test_hybrid_find_fuses_lexical_and_dense(tmp_path, monkeypatch):
     assert hits[0]["relpath"] == "alpha.md"  # BM25 + dense both favor it → RRF top
 
 
+def test_code_purpose_line_is_embedded(tmp_path, monkeypatch):
+    # B2: a code file's purpose-line must be embedded into the dense index (was md-only,
+    # so code got 0 vectors and hybrid demoted code hits). A file with no extractable
+    # purpose-line gets no vector (the `if pl` guard).
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            # multi-line docstring: sentence one is the title, the LATER lines must
+            # still reach the body + the embedder (docstring indexing).
+            "vec.py": (
+                '"""Alpha lookup.\n\nDeeper prose: the gamma rollup packs fox '
+                'vectors.\n"""\n\ndef f():\n    pass\n'
+            ),
+            "bare.py": "def g():\n    pass\n",  # no comment/docstring => empty purpose
+            "notes.md": "# notes\n\nbeta hound\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    try:
+        counts = dict(
+            con.execute(
+                "SELECT relpath, COUNT(*) FROM chunks GROUP BY relpath"
+            ).fetchall()
+        )
+        body = con.execute("SELECT body FROM docs WHERE relpath='vec.py'").fetchone()[0]
+        chunk_text = " ".join(
+            t for (t,) in con.execute("SELECT text FROM chunks WHERE relpath='vec.py'")
+        )
+        title = con.execute("SELECT title FROM docs WHERE relpath='vec.py'").fetchone()[
+            0
+        ]
+    finally:
+        con.close()
+    assert counts.get("vec.py", 0) >= 1  # code got a vector (was 0 pre-B2)
+    assert counts.get("bare.py", 0) == 0  # nothing extractable => no dense vector
+    assert "gamma rollup" in body  # later-docstring text is BM25-searchable
+    assert "gamma rollup" in chunk_text  # ...and embedded
+    assert title == "Alpha lookup."  # display line stays the one-sentence purpose
+    # a query on later-docstring vocabulary finds the code file
+    assert any(h["relpath"] == "vec.py" for h in find.search(cfg, "gamma rollup", 5))
+
+
 def test_find_lexical_only_skips_dense(tmp_path, monkeypatch):
     _force_blob(monkeypatch)
     _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nalpha fox\n"})
@@ -1337,11 +1425,77 @@ def test_find_lexical_only_skips_dense(tmp_path, monkeypatch):
     assert not called  # the dense half was never consulted
 
 
+def test_find_degrades_when_query_embed_fails(tmp_path, monkeypatch):
+    # available() passes at pre-flight but the actual query embed raises (e.g. a down
+    # http endpoint): find must degrade to lexical for this search, not crash.
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(tmp_path, "", {"alpha.md": "# alpha\n\nalpha fox\n"})
+    index.build(tmp_path, cfg)
+
+    def _boom(*a, **k):
+        raise semantic.EmbeddingError("endpoint down")
+
+    monkeypatch.setattr(semantic, "knn", _boom)
+    hits = find.search(cfg, "alpha", 5)  # must not raise
+    assert hits and hits[0]["relpath"] == "alpha.md"
+
+
 def test_rrf_scores_fuse_and_rank():
     # a doc ranked well by EITHER list should rank up; a doc in both wins.
     scores = find._rrf_scores(["a.md", "b.md", "c.md"], ["c.md", "a.md"])
     assert scores["a.md"] > scores["b.md"]  # a is in both, b in one
     assert scores["c.md"] > scores["b.md"]  # c is high in dense + in lexical
+
+
+# ── bench: the committed gold-set scorer (hybrid vs lexical) ───────
+
+
+def test_bench_metric_primitives():
+    hits = [{"relpath": "a.md"}, {"relpath": "b.md"}, {"relpath": "c.md"}]
+    assert bench.rank_of_gold(hits, ["b.md"]) == 2
+    assert bench.rank_of_gold(hits, ["z.md"]) is None
+    assert bench.rank_of_gold(hits, ["c.md", "a.md"]) == 1  # first gold hit wins
+    assert bench.recall_at_k(2, 5) and not bench.recall_at_k(None, 5)
+    assert not bench.recall_at_k(6, 5)
+    assert bench.reciprocal_rank(4) == 0.25 and bench.reciprocal_rank(None) == 0.0
+
+
+def test_bench_load_gold_validates(tmp_path):
+    p = tmp_path / "gold.jsonl"
+    p.write_text(
+        '{"query": "q", "gold": "a.md"}\n'
+        "\n"
+        '{"query": "r", "gold": ["b.md"], "class": "exact"}\n'
+    )
+    gold = bench.load_gold(p)
+    assert gold[0]["gold"] == ["a.md"]  # bare string is wrapped
+    assert gold[0]["class"] == "conceptual"  # default class
+    assert gold[1]["class"] == "exact"
+    p.write_text('{"query": "q"}\n')  # missing gold
+    with pytest.raises(ValueError):
+        bench.load_gold(p)
+
+
+def test_bench_run_scores_both_modes(tmp_path, monkeypatch):
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"alpha.md": "# alpha\n\nalpha fox\n", "beta.md": "# beta\n\nbeta hound\n"},
+    )
+    index.build(tmp_path, cfg)
+    gold = [
+        {"query": "alpha", "gold": ["alpha.md"], "class": "exact"},
+        {"query": "hound", "gold": ["beta.md"], "class": "conceptual"},
+    ]
+    result = bench.run(cfg, gold, k=5)
+    assert result["n"] == 2 and result["semantic_active"]
+    o = result["overall"]
+    assert o["lexical"]["recall"] == 1.0 and o["hybrid"]["recall"] == 1.0
+    assert o["hybrid"]["mrr"] == 1.0  # both golds rank #1 in hybrid
+    assert set(result["classes"]) == {"exact", "conceptual"}
+    report = bench.format_report(result)
+    assert "recall@5" in report and "overall" in report
 
 
 # ── v0.9 rule-as-artifact: generated sections + change-detector ────

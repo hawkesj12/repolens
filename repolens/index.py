@@ -210,6 +210,19 @@ def _create_schema(con: sqlite3.Connection, config: dict) -> None:
 # if indexed. Files larger than max_bytes are skipped (unbounded-read /
 # index-bloat guard) — 0 means no cap.
 # ═══════════════════════════════════════════════════════════════
+def _maybe_embed(con: sqlite3.Connection, rel: str, text: str, config: dict) -> None:
+    # Semantic tier: embed `text` for this doc (chunks + vectors). No-op when the extra
+    # is absent, [semantic].enabled is false, or text is empty. A single doc's embed
+    # failure (endpoint down, model load) must not abort the whole build — log and skip;
+    # the doc stays lexically indexed (still findable).
+    if not (text and config["semantic"]["enabled"] and semantic.available(config)):
+        return
+    try:
+        semantic.embed_doc(con, rel, text, config)
+    except Exception as e:  # noqa: BLE001 — isolate a per-doc embed failure
+        print(f"⚠ embed skipped for {rel}: {e}", file=sys.stderr)
+
+
 def _insert_doc(
     con: sqlite3.Connection,
     root: pathlib.Path,
@@ -227,9 +240,16 @@ def _insert_doc(
         return False
     if is_code:
         pl = purpose.extract_purpose(rel, text)
+        # The searchable text for code is the FULL doc block (module docstring /
+        # leading comment run, capped — purpose.extract_doc); the one-line purpose
+        # stays the display title. BM25 body + the embedder both see the block,
+        # closing the "grep can read the docstring but the index can't" gap. No
+        # block => the one-liner; neither => path/filename signal only, no vector.
+        doc = purpose.extract_doc(rel, text) or pl
         con.execute(
-            "INSERT INTO docs VALUES (?,?,?,?,?)", (rel, pl or p.name, "", pl, "code")
+            "INSERT INTO docs VALUES (?,?,?,?,?)", (rel, pl or p.name, "", doc, "code")
         )
+        _maybe_embed(con, rel, doc, config)
     else:
         kv, block = frontmatter.parse_frontmatter(text)
         con.execute(
@@ -241,15 +261,7 @@ def _insert_doc(
                 "INSERT INTO frontmatter VALUES (?,?,?)",
                 [(rel, k, v) for k, v in kv.items()],
             )
-        # Semantic tier: embed the doc's chunks (no-op when the extra is absent
-        # or [semantic].enabled is false). md content only — code is purpose-line.
-        # A single doc's embed failure (endpoint down, model load) must not abort the
-        # whole build — log and skip; the doc stays lexically indexed (still findable).
-        if config["semantic"]["enabled"] and semantic.available(config):
-            try:
-                semantic.embed_doc(con, rel, text, config)
-            except Exception as e:  # noqa: BLE001 — isolate a per-doc embed failure
-                print(f"⚠ embed skipped for {rel}: {e}", file=sys.stderr)
+        _maybe_embed(con, rel, text, config)  # embed the full markdown body
     return True
 
 

@@ -9,7 +9,10 @@ retrievers are built for) is one clean chunk; a longer section is packed into
 ~512-token pieces on natural boundaries (paragraph → line → sentence → word) WITHIN
 that section, with a small overlap. The preamble before the first heading is its own
 chunk. A doc with no headings falls back to the same recursive packing (never one
-giant chunk). Code files are indexed by purpose-line, not chunked here.
+giant chunk). Heading detection is fence-aware: a `#` line inside a ```/~~~ code
+fence is code, never a section boundary. Code files contribute their module
+docstring / leading comment block (purpose.extract_doc), which flows through the
+same chunking.
 
 Token count is estimated at ~4 chars/token (no tokenizer dependency).
 """
@@ -32,21 +35,32 @@ _SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
 # Matches `# H`, `## SECTION: Foo`, `### bar` — not a bare `#` or a `#tag`.
 _HEADING_RE = re.compile(r"^ {0,3}#{1,6}\s")
 
+# A code fence (CommonMark): up to 3 leading spaces, then ``` or ~~~. `#` lines inside
+# a fenced block are code comments, not headings — the splitter must not break there.
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
 
 # ═══════════════════════════════════════════════════════════════
 # _split_sections()
 # ═══════════════════════════════════════════════════════════════
 # Split text into heading-delimited sections: each heading line starts
 # a new section (the heading stays with its body), and any preamble
-# before the first heading is its own section. Returns [] when the doc
-# has NO headings, signaling the recursive fallback.
+# before the first heading is its own section. Heading detection is
+# suspended inside ```/~~~ code fences — a `# comment` line in a fenced
+# snippet is code, and splitting there shreds the block. Returns []
+# when the doc has NO headings, signaling the recursive fallback.
 # ═══════════════════════════════════════════════════════════════
 def _split_sections(text: str) -> list[str]:
     sections: list[str] = []
     cur: list[str] = []
     saw_heading = False
+    in_fence = False
     for line in text.splitlines(keepends=True):
-        if _HEADING_RE.match(line):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            cur.append(line)
+            continue
+        if not in_fence and _HEADING_RE.match(line):
             saw_heading = True
             if cur and "".join(cur).strip():
                 sections.append("".join(cur))

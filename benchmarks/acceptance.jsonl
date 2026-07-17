@@ -1,0 +1,24 @@
+{"query": "section-bounded chunking", "gold": ["repolens/chunk.py"], "class": "exact"}
+{"query": "disposable SQLite cache", "gold": ["repolens/index.py"], "class": "exact"}
+{"query": "toolchain probe", "gold": ["repolens/env.py"], "class": "exact"}
+{"query": "frontmatter parser", "gold": ["repolens/frontmatter.py"], "class": "exact"}
+{"query": "deterministic corpus hygiene", "gold": ["repolens/lint.py"], "class": "exact"}
+{"query": "typed hygiene linter", "gold": ["repolens/__init__.py", "README.md"], "class": "exact"}
+{"query": "vector KNN hybrid-search tier", "gold": ["repolens/semantic.py"], "class": "exact"}
+{"query": "find the repo root", "gold": ["repolens/root.py"], "class": "exact"}
+{"query": "nearest neighbor vector lookup", "gold": ["repolens/semantic.py"], "class": "conceptual"}
+{"query": "how are two ranked lists blended together", "gold": ["repolens/find.py"], "class": "conceptual"}
+{"query": "split a document into pieces for embedding", "gold": ["repolens/chunk.py"], "class": "conceptual"}
+{"query": "detect which files changed since the last index", "gold": ["repolens/index.py"], "class": "conceptual"}
+{"query": "one line summary of what a source file does", "gold": ["repolens/purpose.py"], "class": "conceptual"}
+{"query": "generate descriptions with a local language model", "gold": ["repolens/enrich.py"], "class": "conceptual"}
+{"query": "keep the always-loaded agent rule current", "gold": ["repolens/rulegen.py", "repolens/ruledoc.py"], "class": "conceptual"}
+{"query": "opt-in embeddings tier that can be turned off", "gold": ["repolens/semantic.py"], "class": "conceptual"}
+{"query": "turn text into vectors for similarity search", "gold": ["repolens/semantic.py"], "class": "paraphrase"}
+{"query": "where does the command line entry point live", "gold": ["repolens/cli.py"], "class": "paraphrase"}
+{"query": "build the folder tree description for the map", "gold": ["repolens/mapgen.py"], "class": "paraphrase"}
+{"query": "read the project configuration settings", "gold": ["repolens/root.py"], "class": "paraphrase"}
+{"query": "walk the repo and add files to the search index", "gold": ["repolens/index.py"], "class": "paraphrase"}
+{"query": "check the toolchain and versions on this machine", "gold": ["repolens/env.py"], "class": "paraphrase"}
+{"query": "auto-discover sqlite databases in the repo", "gold": ["repolens/discover.py"], "class": "paraphrase"}
+{"query": "produce a compact repo map for an agent to read", "gold": ["repolens/digest.py"], "class": "paraphrase"}

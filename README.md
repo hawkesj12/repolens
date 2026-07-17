@@ -19,10 +19,10 @@ Builds a local SQLite index and answers ranked queries with a one-line descripti
 - The index is a **disposable, gitignored cache**: it updates **incrementally** (only changed files, by content hash) and can't drift. `repolens index --rebuild` is the full backstop; delete it and it regenerates.
 
 **`repolens rule` — one visible, self-maintaining orientation file.**
-In a Claude Code repo, `rule` writes `.claude/rules/repolens.md`: a **static header** (what / when / who / why / how — written once) plus two **generated, delimited sections** that stay current on their own — **Environment** (the OS + present toolchain with versions) and **Map** (root folders each with a count, plus every DB table grouped by prefix — `fin_*`, `health_*`, … + `core` + `views`). It auto-loads every session like any rule, and unlike an injected blob it's a file you can open, read, and trust — this replaces the old invisible session-start digest, so the map is now **visible**. Outside a Claude Code repo it drops a short static routing instruction ("concept → `repolens find`; exact string → `rg`") into `AGENTS.md`. Non-destructive: skips if present, appends to an existing `AGENTS.md`, never clobbers a rule it didn't author. `init` installs it by default in a Claude Code repo.
+In a Claude Code repo, `rule` writes `.claude/rules/repolens.md`: a **static header** that teaches a fresh agent what repolens is and how to use it (written once), plus two **generated, delimited sections** that stay current on their own — **Environment** (the OS + present toolchain with versions) and **Map** (root folders each with a count and a "what lives here" description — deterministic by default, or [model-written](#let-a-model-write-the-map-map-opt-in) when you set `[map].command` — plus every DB table grouped by prefix — `fin_*`, `health_*`, … + `core` + `views`). It auto-loads every session like any rule, and unlike an injected blob it's a file you can open, read, and trust — this replaces the old invisible session-start digest, so the map is now **visible**. Outside a Claude Code repo it drops a short static routing instruction ("concept → `repolens find`; exact string → `rg`") into `AGENTS.md`. Non-destructive: skips if present, appends to an existing `AGENTS.md`, never clobbers a rule it didn't author. `init` installs it by default in a Claude Code repo.
 
-**`repolens refresh` — the early-cutoff change-detector (what the hook runs).**
-Every session it compares a cheap change-key — `hash(folder-set + DB schema + toolchain)` — to the one stored in the rule. Unchanged (the common case) it's a ~no-op; on a real structural change it regenerates only the Map + Environment blocks (the static header is never touched) and writes atomically. Deterministic, incremental, catches removals for free.
+**`repolens refresh` / `map` / `tidy` — the early-cutoff change-detectors (what the hooks run).**
+The rule's two blocks regenerate independently, each gated by its own cheap change-key so neither triggers the other. **`refresh`** (the **SessionStart** hook) compares the `env-key` (`hash(toolchain)`) and rewrites **Environment** on a change — plus the deterministic **Map** when no `[map].command` is set. **`map`** compares the `map-key` (`hash(folder-set + DB schema)`) and rewrites **Map** — model-written or deterministic. **`tidy`** is the **SessionEnd** command (`enrich` fill-only → `map`, each gated) wired when a map command is set, so the session that changed the repo rebuilds the Map on the way out. Unchanged is a ~no-op; the static header is never touched; writes are atomic and catch removals for free.
 
 **`repolens lint` — keep the knowledge base honest.**
 Zero-LLM structural checks (dead links, empty files, malformed frontmatter, duplicate titles) **and** per-type field checks you declare in config (e.g. a doc in `meetings/` must carry a `**Date:**`). A bundled **pre-commit hook** runs it and blocks a commit on errors — hygiene enforced, not hoped for.
@@ -33,9 +33,9 @@ Generates `description` + `tags` frontmatter (and a one-line purpose docstring f
 **`repolens env` / `repolens digest` / `repolens hook` — the plumbing.**
 `env` prints the OS + present toolchain (one line); `digest` prints a budgeted repo map; both feed the generated rule sections and also work standalone (any agent/harness can read their stdout). `hook` prints the SessionStart-hook snippet (running `repolens refresh`) — `--install` **additively** merges it into `.claude/settings.json` (never overwrites an existing hook or key); `--check` dry-runs.
 
-## Does it work? (measured, not asserted)
+## Does it help? (measured — run `repolens bench` yourself)
 
-Semantic search is only worth its dependency if it beats plain BM25 on _your_ corpus — so repolens ships with a reproducible 24-query benchmark (a frozen query→gold-doc set across exact-term, conceptual, and paraphrase classes). On that set, hybrid search was **strictly better than lexical-only on the hard (conceptual/paraphrase) queries and never worse on any query** — it recovered cases where the gold doc shared _no words_ with the query and lexical missed it entirely, while tying on exact-term matches. That's the whole point of the hybrid: BM25 nails identifiers and exact terms; the embeddings add recall without ever demoting what BM25 already ranked well. (The win is measured on a same-corpus subset and rests on a handful of queries — see the bake-off for the honest numbers and stats; full-corpus confirmation is pending.) Neither extra installed? You still get ranked BM25.
+Hybrid search earns its dependency only if it beats plain BM25 on _your_ corpus — so repolens ships a committed gold set (`benchmarks/acceptance.jsonl`: 24 query→gold-doc pairs across exact-term, conceptual, and paraphrase classes) and a scorer, `repolens bench`, that runs every query in BOTH modes against the same index and prints recall@k + MRR per class. On this repo's own corpus (bge-base, k=8): **overall recall@8 was 100% hybrid vs 46% lexical-only (MRR 0.640 vs 0.402)**. The conceptual and paraphrase classes are where the embeddings earn their keep (conceptual recall@8: 100% vs 38%), and the exact-term control class did not regress (hybrid MRR 1.000 vs 0.750). In a three-way comparison against ripgrep over full file contents, hybrid led overall (MRR 0.640 vs grep's 0.548, recall@8 100% vs 96%) — indexing code docstrings cut grep's once-decisive conceptual edge (MRR gap 0.185) to a sliver (0.057). **Honestly, though:** that's one small corpus and 24 queries — a real, reproducible signal, not a statistically significant study — and hybrid is not universally better: on 3 of the 24 queries it ranked the gold doc one position below lexical. Rankers trade individual queries; the aggregate is what improved. Neither extra installed? You still get ranked BM25.
 
 ## Who it's for
 
@@ -43,14 +43,14 @@ A repo that mixes **prose/knowledge with code** and is worked by an **agent that
 
 ## What it's _not_
 
-Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a full RAG _system_ (it's the retrieval layer an agent does RAG _with_ — it finds; the agent answers), and not a knowledge-management app. It's a hybrid findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code purpose-lines, and DB schema — and keeps it clean.
+Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code search), not a full RAG _system_ (it's the retrieval layer an agent does RAG _with_ — it finds; the agent answers), and not a knowledge-management app. It's a hybrid findability + hygiene layer with one deliberate edge: it sees the _whole_ corpus — prose, code docstrings + purpose-lines, and DB schema — and keeps it clean.
 
 ### When to use `repolens find` vs `rg`
 
 **Grep when you know the string; `repolens find` when you know the _concept_ but not the file.**
 
 - **`rg` / grep** → you know the literal string or regex, or you need _every_ match. Fast, complete, literal.
-- **`repolens find`** → _"where does X live / which file handles Y"_ — you want the _right few_ files, ranked and described, across docs + code purpose-lines + DB schema (plus your gitignored notes, when you opt in).
+- **`repolens find`** → _"where does X live / which file handles Y"_ — you want the _right few_ files, ranked and described, across docs + code docstrings/purpose-lines + DB schema (plus your gitignored notes, when you opt in).
 
 **Two things worth knowing about matching.** A multi-word query is **all-terms** (every word must appear in the same file); if that returns nothing, repolens automatically **broadens to any-term** and tells you on stderr — so `find "garmin deploy"` still surfaces the closest files even when no single doc has both words. And matching is **stemmed** (`ranking` finds `ranked`) but does **not** split identifiers — search `parse` or `frontmatter`, not `parseFrontmatter`, to match a `camelCase`/`snake_case` name.
 
@@ -76,10 +76,13 @@ repolens init                 # writes .repometa.toml + .gitignore + a warm inde
                               # (additively). --no-hook / --no-rule opt out.
 repolens index                # rebuild/update the index (incremental; a disposable cache)
 repolens find "where's the deploy config"
+repolens bench                # score hybrid vs lexical on the committed gold set (recall@k + MRR)
 repolens lint
-repolens refresh              # regenerate the rule's Map/Environment if structure changed (what the hook runs)
+repolens refresh              # SessionStart: regenerate Environment (+ deterministic Map) if structure changed
+repolens map                  # SessionEnd: regenerate the Map (model-written if [map].command set); --force ignores the gate
+repolens tidy                 # SessionEnd: enrich (fill-only) then map — the one-command maintenance pass
 repolens env                  # OS + present toolchain (one line)
-repolens hook                 # print the SessionStart-hook snippet (init already installs it)
+repolens hook                 # print the hook snippet(s) (init already installs them)
 ```
 
 ## Configure (`.repometa.toml`)
@@ -129,9 +132,56 @@ The install is **non-destructive** — it merges into your existing hooks, never
 
 > The generated rule (and `digest`/`env`) content is **local agent context** — repo/tool _names_ and versions, never file contents or secrets. It's for your agent, not a shareable artifact.
 
-## Keep enrichment fresh (schedule it)
+## When everything runs (triggers & lifecycle)
 
-`enrich` is **fill-only** — it writes a `description`/`tags` only where one is missing. So running it on a schedule means every _new_ doc gets described automatically, and nothing you hand-wrote is ever touched. repolens ships the command; **you wire the trigger** — one line in whatever scheduler your OS already has. A nightly run is plenty (search itself never goes stale — the index re-reads changed files on every `find`; only the one-line summary lags, and only until the next run).
+repolens installs **only event-driven triggers — no cron, no daemon, no file-watcher.** Every trigger is a session lifecycle event, a git hook, or on-demand, so it's portable across OSes with nothing to schedule. The one thing that touches a model (the map writer, and `enrich`) is opt-in and runs off the hot path.
+
+| Subsystem                     | When it runs                                                                                                                                              | Cost                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| **index** (FTS5 + vectors)    | **Lazily, by its consumers** — before every `find`, at the start of each rule-gen (`refresh`/`map`), and `index --rebuild`. No timer.                     | incremental (content-hash); a changed file = a few chunks |
+| **find**                      | On demand (concept search); refreshes the index first                                                                                                     | ms                                                        |
+| **refresh** → **Environment** | **SessionStart** hook, `env-key` gated (deterministic)                                                                                                    | ~1 ms no-op                                               |
+| **map** → **Map**             | **SessionEnd** hook (via `tidy`) or manual `repolens map`; `map-key` gated. Model-written when `[map].command` is set, else the deterministic folder tree | AI, only on a folder/DB change                            |
+| **tidy** (`enrich` → `map`)   | **SessionEnd** hook — installed only when `[map].command` is set                                                                                          | rare (fill-only enrich + gated map)                       |
+| **lint**                      | **pre-commit** git hook + manual `repolens lint`                                                                                                          | ms                                                        |
+| **enrich**                    | Manual, your scheduler, or the SessionEnd `tidy`                                                                                                          | model calls                                               |
+
+**Why two session events?** The **Environment** block is cheap and deterministic, so it refreshes at **SessionStart** and serves the current session. The **Map** can be expensive (a model writes it) and only matters for the _next_ session, so it regenerates at **SessionEnd** — the session that changed the repo rebuilds the map on the way out, and nothing waits at start. Two independent change-keys (`env-key` = toolchain, `map-key` = folder-set + DB schema) mean a tool-version bump never triggers a Map rebuild and a new folder never rewrites Environment.
+
+```
+ SESSION START ─► repolens refresh ─► ensure_fresh (index↺) ─► env-key changed?
+                                                                ├─ yes → rewrite ENVIRONMENT
+                                                                └─ no  → no-op (~1 ms)
+
+   … during the session …
+     repolens find ─────► ensure_fresh (index↺) ─► ranked hybrid search      (on demand)
+     git commit ────────► repolens lint --strict  (pre-commit; blocks on errors)
+
+ SESSION END ───► repolens tidy ─────► ensure_fresh (index↺)
+                                    ─► enrich (fill-only; only if a model is configured)
+                                    ─► map-key changed?
+                                          ├─ yes → [map].command (model) → rewrite MAP
+                                          └─ no  → no-op
+```
+
+The index never runs on a timer — it refreshes as a side effect of whatever reads it (`find`, `refresh`, `map` all call `ensure_fresh` first), so nothing ever queries a stale index, and the SessionEnd `map` sees the session's new files because it re-indexes before checking the map-key.
+
+## Let a model write the Map (`[map]`, opt-in)
+
+By default the **Map** is a deterministic folder tree — accurate, but it can only show folder names + counts. Set `[map].command` and repolens instead hands the folder facts to a model that **reads each folder and writes a rich "what lives here" description** — the same bring-your-own-model pattern as `enrich`:
+
+```toml
+[map]
+command = "claude -p --model sonnet"   # any CLI: folder facts on stdin → Map body on stdout
+```
+
+The model only _produces_ the Map body; repolens still **owns the file** — it frames the section, splices the output, writes atomically, and stamps the map-key, with a **hard fallback to the deterministic render** on any failure (empty output, timeout, crash), so a configured command can never leave a broken rule. With the command set, `init`/`hook` also wire the SessionEnd `tidy` so the Map rebuilds itself on a folder change. Empty command (the default) = the deterministic Map, no model needed. `repolens map --force` regenerates on demand.
+
+## Keep enrichment fresh (schedule it, or ride the SessionEnd hook)
+
+`enrich` is **fill-only** — it writes a `description`/`tags` only where one is missing. So running it on a schedule means every _new_ doc gets described automatically, and nothing you hand-wrote is ever touched. repolens ships the command; **you wire the trigger**.
+
+**The simplest trigger is no scheduler at all.** In a Claude Code repo with `[map].command` set, `enrich` rides the **SessionEnd `tidy`** hook — it runs fill-only on the way out of each session, so new docs get described without a cron, launchd job, or file-watcher. Because it's fill-only and level-triggered, a missed session-end just defers to the next one; nothing drifts. Prefer an explicit schedule? A nightly run is plenty (search itself never goes stale — the index re-reads changed files on every `find`; only the one-line summary lags, and only until the next run):
 
 **macOS (launchd)** — or just add the line to a script a `launchd` job already runs:
 

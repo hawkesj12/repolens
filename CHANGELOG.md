@@ -6,6 +6,47 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`repolens bench` + a committed gold set (`benchmarks/acceptance.jsonl`).** The
+  reproducible answer to "does the semantic half actually help?": 24 query→gold-doc
+  pairs across exact / conceptual / paraphrase classes, scored as recall@k + MRR in
+  BOTH hybrid and lexical modes against the same index. Measured on this repo's own
+  corpus with all Unreleased changes in (bge-base, k=8): overall recall@8 100% hybrid
+  vs 46% lexical, MRR 0.640 vs 0.402; the exact-term control class did not regress
+  (hybrid MRR 1.000 vs 0.750). Not a universal: on 3 of the 24 queries hybrid ranked
+  the gold doc one position below lexical (#1 → #2, never missed) — the aggregate
+  wins, individual queries can lose.
+- **Code docstrings are indexed and embedded.** A code file used to be searchable by
+  ONE line (the extracted purpose-line); a three-way bench against ripgrep showed
+  grep beat hybrid on conceptual queries (MRR 0.518 vs 0.333) solely because grep
+  reads the docstrings the index threw away. `purpose.extract_doc` now keeps the
+  full module docstring / leading comment block (capped at 1500 chars) as the code
+  file's BM25 body + embedded text; the one-line purpose stays the display title.
+  After the change hybrid leads grep overall (MRR 0.640 vs 0.548, recall@8 100% vs
+  96%) and on the paraphrase (0.442 vs 0.233) and exact (1.000 vs 0.875) classes;
+  grep keeps a slim conceptual-MRR edge (0.536 vs 0.479), cut from a 0.185 gap to
+  0.057. Existing indexes need one `repolens index --rebuild` to pick this up (a
+  content hash can't detect an extraction-rule change).
+- **Code purpose-lines are embedded** (one short chunk per code file). Dense retrieval
+  previously covered markdown only, so on a code repo the semantic half could only
+  surface prose docs and RRF demoted correct code hits (e.g. "nearest neighbor vector
+  lookup" ranked `semantic.py` #1 lexical but #4 hybrid; it now ranks #1 hybrid). A
+  code file with no extractable purpose-line keeps its BM25 path/filename signal and
+  simply gets no vector.
+
+### Fixed
+
+- **`find` no longer crashes when the embedding endpoint is down at query time.** The
+  pre-flight availability check is config-only, so a dead bring-your-own http endpoint
+  used to surface as a raw `EmbeddingError` traceback from the dense KNN; `find` now
+  degrades to lexical-only for that search and says so once on stderr.
+- **Chunking is fence-aware.** The heading splitter treated `#` comment lines inside
+  ` ``` `/`~~~` code fences as Markdown headings and cut fenced snippets apart
+  mid-block, degrading their embeddings (this repo's own CHANGELOG chunked into 14%
+  fewer, cleaner pieces after the fix). Heading detection is now suspended inside a
+  fence.
+
 ## [0.9.0] — 2026-07-15
 
 The semantic release: `find` becomes hybrid, and the invisible session digest
@@ -18,9 +59,10 @@ SQLite/FTS5 index — no storage migration, and the core stays stdlib-only.
   BM25 ranking via Reciprocal Rank Fusion (k=60): BM25 carries exact-term/identifier
   precision, embeddings carry paraphrase/meaning recall, and RRF combines the two
   per-document ranked lists with no score normalization. `--lexical` forces BM25-only.
-  On the reproducible 24-query acceptance set, hybrid was strictly better than lexical
-  on the hard conceptual/paraphrase queries and never worse on any query (measured on a
-  same-corpus subset; full-corpus confirmation pending — see the bake-off for the stats).
+  (No committed benchmark yet: the hybrid's paraphrase-recall benefit is a directional
+  signal from early hand-checks on a docs-heavy corpus, not a measured result, and RRF
+  can occasionally re-rank a strong BM25 hit rather than only adding to it — a
+  reproducible query→gold benchmark with a runnable scorer is the next step.)
 - **Semantic tier as an opt-in extra (`pip install 'repolens[semantic]'`).** Embeddings
   via `fastembed` (ONNX, CPU, no service — no Ollama), default model
   `BAAI/bge-base-en-v1.5` (768-dim, built for short-passage retrieval). Vectors store
