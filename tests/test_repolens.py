@@ -270,6 +270,27 @@ def test_fts5_broadens_to_or_on_zero_and_hits(tmp_path, capsys):
     assert "broadened to any-term" in capsys.readouterr().err
 
 
+def test_find_returns_matching_passage(tmp_path):
+    # Every hit carries a `snippet` — the passage that matched. In lexical mode
+    # (semantic off by default here) it's the FTS5 excerpt from the body.
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "deploy.md": "# Deploy\n\nThe deploy config lives in the staging pipeline "
+            "manifest, not in the app repo.\n"
+        },
+    )
+    index.build(tmp_path, cfg)
+    hits = find.search(cfg, "deploy config", 5)
+    assert hits and hits[0]["relpath"] == "deploy.md"
+    assert "snippet" in hits[0]
+    snip = hits[0]["snippet"].lower()
+    assert "deploy" in snip and "config" in snip  # the excerpt shows the matched text
+    assert len(hits[0]["snippet"]) <= 240  # trimmed for display, one line
+    assert "\n" not in hits[0]["snippet"]
+
+
 def test_ensure_fresh_force(tmp_path, monkeypatch):
     _root, cfg = _repo(tmp_path, "")
     monkeypatch.setenv("REPOLENS_FORCE", "1")
@@ -869,7 +890,7 @@ def test_vec0_backend_roundtrip(tmp_path, monkeypatch):
     assert hits and hits[0][0] == "alpha.md"
     semantic.delete_doc(con, "alpha.md")  # cascade to vec_chunks
     con.commit()
-    assert "alpha.md" not in {rp for rp, _d in semantic.knn(con, "alpha", 5, cfg)}
+    assert "alpha.md" not in {h[0] for h in semantic.knn(con, "alpha", 5, cfg)}
 
 
 def test_semantic_blob_roundtrip_rollup_and_delete(tmp_path, monkeypatch):
@@ -882,10 +903,11 @@ def test_semantic_blob_roundtrip_rollup_and_delete(tmp_path, monkeypatch):
     con.commit()
     hits = semantic.knn(con, "alpha", 5, cfg)
     assert hits and hits[0][0] == "alpha.md"  # best-chunk rollup ranks the alpha doc
-    assert len({rp for rp, _d in hits}) == len(hits)  # per-DOC (rolled up), no dup docs
+    assert "alpha" in hits[0][2]  # the winning chunk's TEXT rides along (for snippets)
+    assert len({h[0] for h in hits}) == len(hits)  # per-DOC (rolled up), no dup docs
     semantic.delete_doc(con, "alpha.md")
     con.commit()
-    assert "alpha.md" not in {rp for rp, _d in semantic.knn(con, "alpha", 5, cfg)}
+    assert "alpha.md" not in {h[0] for h in semantic.knn(con, "alpha", 5, cfg)}
 
 
 def test_index_embeds_and_cascade_deletes_chunks(tmp_path, monkeypatch):

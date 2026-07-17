@@ -176,6 +176,62 @@ def _note_dense_failed(err: Exception) -> None:
     )
 
 
+# The passage shown with each hit — trimmed to a readable window.
+_SNIPPET_CHARS = 220
+_SNIPPET_TOKENS = 14  # FTS5 snippet window size
+
+
+def _trim(text: str) -> str:
+    s = " ".join((text or "").split())  # collapse whitespace/newlines to one line
+    if len(s) <= _SNIPPET_CHARS:
+        return s
+    return s[:_SNIPPET_CHARS].rsplit(" ", 1)[0] + " …"
+
+
+def _body_head(con: sqlite3.Connection, relpath: str) -> str:
+    row = con.execute(
+        "SELECT body FROM docs WHERE relpath=? LIMIT 1", (relpath,)
+    ).fetchone()
+    return row[0] if row and row[0] else ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# _fts_snippet()
+# ═══════════════════════════════════════════════════════════════
+# The best matching excerpt from a doc's body for a LEXICAL hit (one with
+# no dense chunk to show). FTS5's snippet() picks the window around the
+# matched terms; we try the raw query, then a quoted phrase, then any-term
+# — mirroring _lexical_rows' own fallbacks — and degrade to the body head
+# on a non-FTS5 build or a query that won't parse.
+# ═══════════════════════════════════════════════════════════════
+def _fts_snippet(con: sqlite3.Connection, relpath: str, query: str) -> str:
+    if not _is_fts5(con):
+        return _body_head(con, relpath)
+    forms = [query, '"' + query.replace('"', "") + '"', " OR ".join(query.split())]
+    for q in forms:
+        if not q.strip():
+            continue
+        try:
+            row = con.execute(
+                "SELECT snippet(docs, -1, '', '', ' … ', ?) FROM docs "
+                "WHERE relpath=? AND docs MATCH ? LIMIT 1",
+                (_SNIPPET_TOKENS, relpath, q),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            continue
+        if row and row[0]:
+            return row[0]
+    return _body_head(con, relpath)
+
+
+def _passage(
+    con: sqlite3.Connection, relpath: str, query: str, chunk_text: str | None
+) -> str:
+    # The passage to show for a hit: the dense-winning chunk's text when we have one
+    # (semantic match), else the best lexical excerpt from the body. Trimmed for display.
+    return _trim(chunk_text if chunk_text else _fts_snippet(con, relpath, query))
+
+
 # ═══════════════════════════════════════════════════════════════
 # search()
 # ═══════════════════════════════════════════════════════════════
@@ -200,7 +256,13 @@ def search(
                 _note_lexical_only()
             rows = _lexical_rows(con, query, k)
             return [
-                {"relpath": r, "title": t, "kind": k_, "score": round(s, 3)}
+                {
+                    "relpath": r,
+                    "title": t,
+                    "kind": k_,
+                    "score": round(s, 3),
+                    "snippet": _passage(con, r, query, None),
+                }
                 for r, t, k_, s in rows
             ]
 
@@ -209,7 +271,8 @@ def search(
         pool = max(k * 4, 30)
         lex_rows = _lexical_rows(con, query, pool)
         try:
-            dense = semantic.knn(con, query, pool, config)  # [(relpath, distance)]
+            # [(relpath, distance, chunk_text)] — the winning chunk's text rides along.
+            dense = semantic.knn(con, query, pool, config)
         except Exception as e:  # noqa: BLE001 — query-time embed failure => degrade
             # available() passed but the actual embed failed (e.g. a down http
             # endpoint) — fall back to the same lexical result the pre-flight
@@ -217,12 +280,19 @@ def search(
             _note_dense_failed(e)
             rows = _lexical_rows(con, query, k)
             return [
-                {"relpath": r, "title": t, "kind": k_, "score": round(s, 3)}
+                {
+                    "relpath": r,
+                    "title": t,
+                    "kind": k_,
+                    "score": round(s, 3),
+                    "snippet": _passage(con, r, query, None),
+                }
                 for r, t, k_, s in rows
             ]
 
         meta = {r[0]: (r[1], r[2]) for r in lex_rows}  # relpath -> (title, kind)
-        scores = _rrf_scores([r[0] for r in lex_rows], [rp for rp, _d in dense])
+        chunk_by_doc = {rp: txt for rp, _d, txt in dense}  # relpath -> best chunk text
+        scores = _rrf_scores([r[0] for r in lex_rows], [rp for rp, _d, _t in dense])
         ordered = sorted(scores, key=lambda rp: (-scores[rp], rp))[:k]
 
         missing = [rp for rp in ordered if rp not in meta]
@@ -232,13 +302,20 @@ def search(
                 missing,
             ):
                 meta[rp] = (ti, ki)
+
+        hits = []
+        for rp in ordered:
+            ti, ki = meta.get(rp, ("", ""))
+            hits.append(
+                {
+                    "relpath": rp,
+                    "title": ti,
+                    "kind": ki,
+                    "score": round(scores[rp], 4),
+                    # dense-winning doc → its chunk text; lexical-only doc → body excerpt.
+                    "snippet": _passage(con, rp, query, chunk_by_doc.get(rp)),
+                }
+            )
+        return hits
     finally:
         con.close()
-
-    hits = []
-    for rp in ordered:
-        ti, ki = meta.get(rp, ("", ""))
-        hits.append(
-            {"relpath": rp, "title": ti, "kind": ki, "score": round(scores[rp], 4)}
-        )
-    return hits

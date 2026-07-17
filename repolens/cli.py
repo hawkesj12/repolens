@@ -165,6 +165,11 @@ def cmd_find(args) -> int:
         tag = "[DB]" if h["kind"] == "db-table" else "    "
         title = f"   — {h['title']}" if h["title"] else ""
         print(f"    {tag} {h['relpath']}{title}")
+        snip = h.get("snippet", "")
+        # Skip the passage when it just repeats the title (e.g. a code file whose only
+        # indexed text is its one-line purpose) — no point echoing it.
+        if snip and snip.strip() != (h["title"] or "").strip():
+            print(f"           │ {snip}")
     return 0
 
 

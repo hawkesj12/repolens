@@ -371,14 +371,15 @@ def delete_doc(con: sqlite3.Connection, relpath: str) -> None:
 # knn()
 # ═══════════════════════════════════════════════════════════════
 # Dense retrieval for one query, returned as a per-DOC ranked list
-# [(relpath, distance), ...] — each doc scored by its single best
-# (min-distance) chunk (parent-document rollup). We over-fetch chunk
-# hits (many chunks share a doc) then roll up + trim to k. Empty when
-# the tier is off/disabled or nothing is indexed yet.
+# [(relpath, distance, chunk_text), ...] — each doc scored by its single
+# best (min-distance) chunk (parent-document rollup), and carrying THAT
+# chunk's text so the caller can show the passage that actually matched.
+# We over-fetch chunk hits (many chunks share a doc) then roll up + trim
+# to k. Empty when the tier is off/disabled or nothing is indexed yet.
 # ═══════════════════════════════════════════════════════════════
 def knn(
     con: sqlite3.Connection, query: str, k: int, config: dict
-) -> list[tuple[str, float]]:
+) -> list[tuple[str, float, str]]:
     if (
         active_path(config) == "off"
         or not config["semantic"]["enabled"]
@@ -391,7 +392,7 @@ def knn(
         return []
     qv = batch[0]
     over = max(k * 8, 40)  # over-fetch: chunks collapse to fewer parent docs
-    rows: list[tuple[str, float]] = []
+    rows: list[tuple[str, float, str]] = []  # (relpath, distance, chunk_text)
     if active_path(config) == "vec0":
         _load_vec(con)
         hits = con.execute(
@@ -401,30 +402,37 @@ def knn(
         ).fetchall()
         if hits:
             ids = [h[0] for h in hits]
-            relmap = dict(
-                con.execute(
-                    f"SELECT rowid, relpath FROM chunks WHERE rowid IN ({','.join('?' * len(ids))})",
+            chunkmap = {
+                r[0]: (r[1], r[2])  # rowid -> (relpath, text)
+                for r in con.execute(
+                    f"SELECT rowid, relpath, text FROM chunks WHERE rowid IN ({','.join('?' * len(ids))})",
                     ids,
                 )
-            )
-            rows = [(relmap[r], d) for r, d in hits if r in relmap]
+            }
+            rows = [
+                (chunkmap[r][0], d, chunkmap[r][1]) for r, d in hits if r in chunkmap
+            ]
     else:
         import numpy as np
 
         data = con.execute(
-            "SELECT c.relpath, x.embedding FROM vectors x JOIN chunks c ON c.rowid=x.rowid"
+            "SELECT c.relpath, c.text, x.embedding FROM vectors x JOIN chunks c ON c.rowid=x.rowid"
         ).fetchall()
         if data:
-            mat = np.frombuffer(b"".join(e for _r, e in data), dtype="<f4").reshape(
+            mat = np.frombuffer(b"".join(e for _r, _t, e in data), dtype="<f4").reshape(
                 len(data), -1
             )
             dists = 1.0 - (mat @ qv)  # normalized vectors => cosine distance
             order = np.argsort(dists)[:over]
-            rows = [(data[i][0], float(dists[i])) for i in order]
+            rows = [(data[i][0], float(dists[i]), data[i][1]) for i in order]
 
-    # parent-document rollup: each doc keeps its single best chunk's distance
-    best: dict[str, float] = {}
-    for relpath, dist in rows:
-        if relpath not in best or dist < best[relpath]:
-            best[relpath] = dist
-    return sorted(best.items(), key=lambda kv: kv[1])[:k]
+    # parent-document rollup: each doc keeps its single best (min-distance) chunk —
+    # and that chunk's TEXT, so the caller can show the passage that matched.
+    best: dict[str, tuple[float, str]] = {}
+    for relpath, dist, text in rows:
+        if relpath not in best or dist < best[relpath][0]:
+            best[relpath] = (dist, text)
+    return [
+        (rp, d, txt)
+        for rp, (d, txt) in sorted(best.items(), key=lambda kv: kv[1][0])[:k]
+    ]
