@@ -18,7 +18,7 @@ All notable changes to this project are documented here. The format follows
   pairs across exact / conceptual / paraphrase classes, scored as recall@k + MRR in
   BOTH hybrid and lexical modes against the same index. Measured on this repo's own
   corpus with all Unreleased changes in (bge-base, k=8): overall recall@8 100% hybrid
-  vs 50% lexical, MRR 0.669 vs 0.354; conceptual recall@8 100% vs 33%; the exact-term
+  vs 50% lexical, MRR 0.674 vs 0.381; conceptual recall@8 100% vs 33%; the exact-term
   control class did not regress (hybrid MRR 1.000 vs 0.714).
 - **Code docstrings are indexed and embedded.** A code file used to be searchable by
   ONE line (the extracted purpose-line); a three-way bench against ripgrep showed
