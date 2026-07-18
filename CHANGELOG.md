@@ -14,12 +14,14 @@ All notable changes to this project are documented here. The format follows
   to one line. The winning chunk was already found and stored; the per-doc rollup was
   discarding it. `cmd_find` prints it under each hit; `--json` gains a `snippet` field.
 - **`repolens bench` + a committed gold set (`benchmarks/acceptance.jsonl`).** The
-  reproducible answer to "does the semantic half actually help?": 18 query→gold-doc
-  pairs across exact / conceptual / paraphrase classes, scored as recall@k + MRR in
-  BOTH hybrid and lexical modes against the same index. Measured on this repo's own
-  corpus with all Unreleased changes in (bge-base, k=8): overall recall@8 100% hybrid
-  vs 50% lexical, MRR 0.674 vs 0.381; conceptual recall@8 100% vs 33%; the exact-term
-  control class did not regress (hybrid MRR 1.000 vs 0.714).
+  reproducible answer to "does ranking, and then the semantic half, actually help?":
+  18 query→gold-doc pairs across exact / conceptual / paraphrase classes, scored as
+  recall@k + MRR in THREE modes against the same corpus — a literal **grep** baseline,
+  **lexical** (BM25), and **hybrid** (BM25 + semantic), so the table reads as the
+  progression grep → BM25 → hybrid. Measured on this repo's own corpus (bge-base, k=8):
+  overall recall@8 grep 72% / lexical 50% / hybrid 100%; MRR 0.39 / 0.37 / 0.68. Grep
+  beats the lexical arm (it reads full file bodies, which the code index reduces to a
+  purpose-line + docstring), but hybrid beats grep decisively.
 - **Code docstrings are indexed and embedded.** A code file used to be searchable by
   ONE line (the extracted purpose-line); a three-way bench against ripgrep showed
   grep beat hybrid on conceptual queries (MRR 0.518 vs 0.333) solely because grep

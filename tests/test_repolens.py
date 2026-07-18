@@ -1125,6 +1125,42 @@ def test_bench_run_scores_both_modes(tmp_path, monkeypatch):
     o = result["overall"]
     assert o["lexical"]["recall"] == 1.0 and o["hybrid"]["recall"] == 1.0
     assert o["hybrid"]["mrr"] == 1.0  # both golds rank #1 in hybrid
+    assert "grep" in o  # the grep baseline arm is scored too
     assert set(result["classes"]) == {"exact", "conceptual"}
     report = bench.format_report(result)
     assert "recall@5" in report and "overall" in report
+
+
+def test_bench_grep_arm(tmp_path, monkeypatch):
+    # The grep baseline is literal: it finds a query whose words appear verbatim and
+    # misses one that doesn't — scored identically to find, present in every result slice.
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {
+            "alpha.md": "# alpha\n\nalpha fox trots\n",
+            "beta.md": "# beta\n\nbeta hound\n",
+        },
+    )
+    index.build(tmp_path, cfg)
+    gold = [
+        {
+            "query": "alpha fox",
+            "gold": ["alpha.md"],
+            "class": "exact",
+        },  # literal → found
+        {
+            "query": "zzznope",
+            "gold": ["beta.md"],
+            "class": "paraphrase",
+        },  # absent → miss
+    ]
+    result = bench.run(cfg, gold, k=5)
+    assert "grep" in result["overall"]
+    assert all("grep" in slot for slot in result["classes"].values())
+    grep_rank = {p["query"]: p["grep_rank"] for p in result["per_query"]}
+    assert grep_rank["alpha fox"] == 1  # both terms in alpha.md → ranked #1
+    assert grep_rank["zzznope"] is None  # literal grep can't find an absent term
+    report = bench.format_report(result)
+    assert "grep R@k" in report and "hyb R@k" in report

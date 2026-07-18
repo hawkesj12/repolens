@@ -38,7 +38,15 @@ Scores hybrid vs lexical `find` on a committed gold set (`benchmarks/acceptance.
 
 ## Does it help? (measured — run `repolens bench` yourself)
 
-Hybrid search earns its dependency only if it beats plain BM25 on _your_ corpus — so repolens ships a committed gold set (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs across exact-term, conceptual, and paraphrase classes) and a scorer, `repolens bench`, that runs every query in BOTH modes against the same index and prints recall@k + MRR per class. On this repo's own corpus (bge-base, k=8): **overall recall@8 was 100% hybrid vs 50% lexical-only (MRR 0.674 vs 0.381)**. The conceptual and paraphrase classes are where the embeddings earn their keep (conceptual recall@8: 100% vs 33%; paraphrase 100% vs 40%), and the exact-term control class did not regress (hybrid MRR 1.000 vs 0.714). **Honestly, though:** that's one small corpus and 18 queries — a real, reproducible signal, not a statistically significant study. Hybrid isn't magic either: RRF fuses the two rankers, so on a different corpus it can occasionally re-rank a strong BM25 hit rather than only adding to it. Run `repolens bench` on your own repo and see. Neither extra installed? You still get ranked BM25.
+`repolens bench` runs every query **three ways against the same corpus** — a literal **grep** baseline, **lexical** `find` (BM25), and **hybrid** `find` (BM25 + semantic) — and prints recall@k + MRR per class, so you can see the progression grep → BM25 → hybrid rather than trust a claim. It ships a committed gold set (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs across exact-term, conceptual, and paraphrase classes). On this repo's own corpus (bge-base, k=8):
+
+| arm                          | overall recall@8 | overall MRR |
+| ---------------------------- | ---------------- | ----------- |
+| grep (literal)               | 72%              | 0.39        |
+| lexical (BM25)               | 50%              | 0.37        |
+| **hybrid (BM25 + semantic)** | **100%**         | **0.68**    |
+
+Grep is a stronger baseline than you'd expect — it reads full file bodies, so it actually beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source). **Hybrid still beats grep decisively** — 100% vs 72% recall, 0.68 vs 0.39 MRR — because the embeddings recover the conceptual and paraphrase queries neither literal tool can reach. **Honestly, though:** that's one small corpus and 18 queries — a real, reproducible signal, not a statistically significant study. Run `repolens bench` on your own repo and see.
 
 ## Who it's for
 
