@@ -141,7 +141,9 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
 
     index_path = root / rl.get("index_path", DEFAULT_INDEX_PATH)
     skip_dirs = DEFAULT_SKIP_DIRS | set(rl.get("skip_dirs", []))
-    skip_files = set(rl.get("skip_files", []))
+    # Never index repolens's own config file — it's tooling, not corpus, and otherwise
+    # shows up as noise in the very first `find` a new user runs.
+    skip_files = {CONFIG_NAME} | set(rl.get("skip_files", []))
     code_exts = set(rl.get("code_exts", DEFAULT_CODE_EXTS))
     # Respect .gitignore by DEFAULT — the file corpus skips gitignored paths
     # unless include_gitignored is set (opt-in for personal/knowledge repos).

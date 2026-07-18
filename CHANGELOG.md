@@ -49,6 +49,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **repolens no longer indexes its own `.repolens.toml`.** The config file is tooling,
+  not corpus, but it was being indexed and showed up as noise in results (the very first
+  `find` a new user runs). Added `CONFIG_NAME` to the default `skip_files`.
 - **`find` no longer crashes when the embedding endpoint is down at query time.** The
   pre-flight availability check is config-only, so a dead bring-your-own http endpoint
   used to surface as a raw `EmbeddingError` traceback from the dense KNN; `find` now

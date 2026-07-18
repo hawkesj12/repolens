@@ -193,6 +193,18 @@ def test_build_atomic_single_docs_table(tmp_path):
     con.close()
 
 
+def test_config_file_is_not_indexed(tmp_path):
+    # repolens's own .repolens.toml is tooling, not corpus — it must never show up in
+    # results (it did, as noise in a fresh user's first `find`).
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nhello world\n"})
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rels = {r[0] for r in con.execute("SELECT relpath FROM docs")}
+    con.close()
+    assert ".repolens.toml" not in rels
+    assert "a.md" in rels
+
+
 def test_corpus_newer_than_watches_code(tmp_path, monkeypatch):
     _root, cfg = _repo(tmp_path, "", {"s.py": '"""x."""\n'})
     codefile = tmp_path / "s.py"
