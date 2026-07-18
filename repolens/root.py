@@ -12,6 +12,7 @@ merged over sane generic defaults — so an unconfigured repo still works and no
 from __future__ import annotations
 
 import pathlib
+import sys
 
 try:
     import tomllib  # py3.11+
@@ -19,6 +20,8 @@ except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
 CONFIG_NAME = ".repolens.toml"
+LEGACY_CONFIG_NAME = ".repometa.toml"  # pre-0.11 name — read with a deprecation warning
+_LEGACY_WARNED = False  # warn about a legacy config once per process
 
 # Generic defaults — nothing repo-specific. Consumers EXTEND skip_dirs via config.
 DEFAULT_INDEX_PATH = ".repolens/index.db"
@@ -107,7 +110,9 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
         starts.append(pathlib.Path(start).resolve())
     starts.append(pathlib.Path.cwd())
 
-    for marker in (CONFIG_NAME, ".git"):
+    # ".repometa.toml" is the pre-0.11 config name — still recognized as a root marker so
+    # an un-migrated repo resolves correctly (see load_config's back-compat read).
+    for marker in (CONFIG_NAME, LEGACY_CONFIG_NAME, ".git"):
         for base in starts:
             for parent in [base, *base.parents]:
                 if (parent / marker).exists():
@@ -130,6 +135,21 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     root = pathlib.Path(root) if root is not None else find_root()
     data: dict = {}
     path = root / CONFIG_NAME
+    # Back-compat: read a pre-0.11 .repometa.toml when .repolens.toml is absent, with a
+    # one-time deprecation warning — so an un-migrated repo (e.g. before `git mv`) keeps
+    # its config (include_gitignored, types, ...) instead of silently falling to defaults.
+    if not path.is_file():
+        legacy = root / LEGACY_CONFIG_NAME
+        if legacy.is_file():
+            path = legacy
+            global _LEGACY_WARNED
+            if not _LEGACY_WARNED:
+                _LEGACY_WARNED = True
+                print(
+                    f"⚠ {LEGACY_CONFIG_NAME} is deprecated — rename it to {CONFIG_NAME} "
+                    f"(git mv {LEGACY_CONFIG_NAME} {CONFIG_NAME}); reading it for now",
+                    file=sys.stderr,
+                )
     if tomllib is not None and path.is_file():
         try:
             with open(path, "rb") as f:

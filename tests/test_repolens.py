@@ -205,17 +205,6 @@ def test_config_file_is_not_indexed(tmp_path):
     assert "a.md" in rels
 
 
-def test_corpus_newer_than_watches_code(tmp_path, monkeypatch):
-    _root, cfg = _repo(tmp_path, "", {"s.py": '"""x."""\n'})
-    codefile = tmp_path / "s.py"
-    monkeypatch.setattr(
-        index, "_walk", lambda r, c, code: iter([codefile]) if code else iter([])
-    )
-    assert index.corpus_newer_than(tmp_path, cfg, 0) is True
-    monkeypatch.setattr(index, "_walk", lambda r, c, code: iter([]))
-    assert index.corpus_newer_than(tmp_path, cfg, 0) is False
-
-
 # ── find: LIKE fallback ranked + loud ──────────────────────────
 def _plain_index(cfg):
     cfg["index_path"].parent.mkdir(parents=True, exist_ok=True)
@@ -400,12 +389,6 @@ def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init"])  # config exists, no --force → no discovery/append
     assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
-
-
-# ── digest ─────────────────────────────────────────────────────
-
-
-# ── env ────────────────────────────────────────────────────────
 
 
 # ── hook (NON-DESTRUCTIVE) ─────────────────────────────────────
@@ -632,9 +615,6 @@ def _fake_ask(config, prompt):
     if "DESCRIPTION" in prompt:
         return "DESCRIPTION: A test document about things.\nTAGS: Alpha, beta, gamma!"
     return "Does a test thing quickly."
-
-
-# ── rule (the agent instruction doc — teach the agent to use find) ─
 
 
 # ── v0.9 semantic tier: config, chunking, vector store, hybrid ─────
@@ -1000,6 +980,101 @@ def test_cache_dir_is_durable_and_env_overridable(monkeypatch, tmp_path):
     assert d.endswith(os.path.join("repolens", "fastembed"))
     monkeypatch.setenv("REPOLENS_CACHE_DIR", str(tmp_path / "mycache"))
     assert semantic._cache_dir() == str(tmp_path / "mycache")
+
+
+def test_incremental_backfills_when_semantic_enabled(tmp_path, monkeypatch):
+    # #1: an index built lexical-first, then upgraded to semantic, must BACKFILL
+    # embeddings on the next incremental — not silently stay lexical while reporting
+    # hybrid. The embed-sig mismatch ("" -> "model:dims") forces a full rebuild.
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nalpha fox\n"})
+    index.build(tmp_path, cfg)  # semantic OFF (autouse fixture) → no chunk table
+    con = sqlite3.connect(cfg["index_path"])
+    tables = {
+        r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    con.close()
+    assert "chunks" not in tables  # a lexical index has no vectors
+    _force_blob(monkeypatch)  # now semantic is available (fake embedder)
+    index.build_incremental(tmp_path, cfg)  # detects the embed-sig mismatch → backfill
+    con = sqlite3.connect(cfg["index_path"])
+    n = con.execute("SELECT count(*) FROM chunks").fetchone()[0]
+    con.close()
+    assert n > 0  # embeddings were backfilled, not skipped
+
+
+def test_model_load_failure_memoized_no_retry_storm(monkeypatch):
+    # #2: a failing fastembed load sets the sentinel + raises; a SECOND call short-circuits
+    # without re-attempting the load (no per-doc retry storm on an offline/cold-cache box).
+    fastembed = pytest.importorskip("fastembed")
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
+    monkeypatch.setattr(semantic, "_MODELS", {})
+    calls = {"n": 0}
+
+    class _BoomModel:
+        def __init__(self, *a, **k):
+            calls["n"] += 1
+            raise RuntimeError("cannot load model")
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", _BoomModel)
+    cfg = {"semantic": {"enabled": True, "model": "m", "dims": 5, "threads": 0}}
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._model(cfg)
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._model(cfg)  # second call must NOT retry the load
+    assert semantic._MODEL_LOAD_FAILED is True
+    assert calls["n"] == 1  # loaded once, then memoized → no storm
+
+
+def test_noop_incremental_takes_no_write_lock(tmp_path):
+    # #8: a no-op incremental must NOT take the write lock (else it serializes concurrent
+    # find-refreshers). Hold the single WAL write lock on another connection; a no-op
+    # refresh must still complete rather than block on it.
+    import threading
+
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nx\n"})
+    index.build(tmp_path, cfg)
+    c = sqlite3.connect(cfg["index_path"])
+    c.execute("PRAGMA journal_mode=WAL")  # persist WAL so reader+writer coexist
+    c.close()
+    blocker = sqlite3.connect(cfg["index_path"])
+    blocker.execute("PRAGMA journal_mode=WAL")
+    blocker.execute("BEGIN IMMEDIATE")  # hold the write lock
+    out: list = []
+    t = threading.Thread(
+        target=lambda: out.append(index.build_incremental(tmp_path, cfg)), daemon=True
+    )
+    t.start()
+    t.join(timeout=5)
+    blocker.rollback()
+    blocker.close()
+    assert not t.is_alive(), "no-op refresh blocked on a held write lock"
+    assert out and out[0][:2] == (0, 0)
+
+
+def test_cmd_index_threads_flag_overrides(tmp_path, monkeypatch):
+    # #7: --threads overrides [semantic].threads for the build.
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nx\n"})
+    index.build(tmp_path, cfg)
+    captured = {}
+
+    def _fake_bi(root_, config):
+        captured["threads"] = config["semantic"]["threads"]
+        return (0, 0, 0.0)
+
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(index, "build_incremental", _fake_bi)
+    cli.main(["index", "--threads", "0"])
+    assert captured["threads"] == 0
+
+
+def test_legacy_repometa_config_read_with_warning(tmp_path, monkeypatch, capsys):
+    # #4: a pre-0.11 .repometa.toml (no .repolens.toml) is still read, with a one-time
+    # deprecation warning — so an un-migrated repo keeps its config, not defaults.
+    monkeypatch.setattr(root, "_LEGACY_WARNED", False)
+    (tmp_path / ".repometa.toml").write_text("[repolens]\nmax_file_bytes = 4242\n")
+    cfg = root.load_config(tmp_path)
+    assert cfg["max_file_bytes"] == 4242  # legacy config honored
+    assert "deprecated" in capsys.readouterr().err.lower()
 
 
 def test_hybrid_find_fuses_lexical_and_dense(tmp_path, monkeypatch):

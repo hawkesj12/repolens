@@ -88,6 +88,10 @@ def cmd_init(args) -> int:
 
 def cmd_index(args) -> int:
     r, cfg = _ctx()
+    if (
+        args.threads is not None
+    ):  # --threads overrides the fastembed core cap for this run
+        cfg["semantic"]["threads"] = args.threads
     if args.rebuild or not cfg["index_path"].exists():
         n, code, tables, ms = index.build(r, cfg)
         kb = cfg["index_path"].stat().st_size / 1024
@@ -235,6 +239,13 @@ def main(argv=None) -> int:
     )
     p_index.add_argument(
         "--optimize", action="store_true", help="compact the FTS5 index after"
+    )
+    p_index.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="override [semantic].threads for this build — cap the CPU cores fastembed "
+        "uses (0 = all cores, default 2). Handy for a fast one-off --rebuild.",
     )
     p_index.set_defaults(func=cmd_index)
 

@@ -45,6 +45,9 @@ _VEC_BACKEND: str | None = (
 )
 _ANNOUNCED = False
 _CACHE_LOGGED = False
+_MODEL_LOAD_FAILED = (
+    False  # set once if fastembed's model can't load → degrade to lexical
+)
 
 
 class EmbeddingError(RuntimeError):
@@ -73,6 +76,8 @@ def available(config: dict | None = None) -> bool:
     # they're used (_model, _normalize, knn), reached only when something truly embeds.
     import importlib.util
 
+    if _MODEL_LOAD_FAILED:
+        return False  # a prior model load failed this process → stay lexical
     if importlib.util.find_spec("numpy") is None:
         return False
     sm = _sem(config)
@@ -164,13 +169,6 @@ def _table_exists(con: sqlite3.Connection, name: str) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _model()
-# ═══════════════════════════════════════════════════════════════
-# Load (once, cached) the configured fastembed model. `threads` throttles
-# ONNX intra-op parallelism — a low value (default 2) keeps a big first
-# build from pinning every core; 0 means the library default (all cores).
-# ═══════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════
 # _cache_dir()
 # ═══════════════════════════════════════════════════════════════
 # A DURABLE model-cache dir. fastembed defaults to $TMPDIR, which the OS
@@ -193,19 +191,49 @@ def _cache_dir() -> str:
     return os.path.join(base, "repolens", "fastembed")
 
 
+# ═══════════════════════════════════════════════════════════════
+# _model()
+# ═══════════════════════════════════════════════════════════════
+# Load (once, cached) the configured fastembed model. `threads` throttles
+# ONNX intra-op parallelism — a low value (default 2) keeps a big first
+# build from pinning every core; 0 = library default (all cores). If the
+# load FAILS (no network + cold cache, corrupt model, unusable onnxruntime)
+# we set _MODEL_LOAD_FAILED once and raise EmbeddingError — so every later
+# call short-circuits to lexical instead of re-attempting the load per doc
+# (which turns an offline build into an effective hang). fastembed's own
+# loguru output is quieted so a graceful degrade doesn't look like a crash.
+# ═══════════════════════════════════════════════════════════════
 def _model(config: dict):
     name = config["semantic"]["model"]
     if name not in _MODELS:
-        from fastembed import TextEmbedding
+        global _MODEL_LOAD_FAILED, _CACHE_LOGGED
+        if _MODEL_LOAD_FAILED:
+            raise EmbeddingError("fastembed model previously failed to load")
+        try:
+            from fastembed import TextEmbedding
 
-        cache = _cache_dir()
-        os.makedirs(cache, exist_ok=True)
-        global _CACHE_LOGGED
-        if not _CACHE_LOGGED:
-            _CACHE_LOGGED = True
-            print(f"ℹ semantic: model cache at {cache}", file=sys.stderr)
-        threads = int(config["semantic"].get("threads", 0)) or None
-        _MODELS[name] = TextEmbedding(model_name=name, threads=threads, cache_dir=cache)
+            try:  # best-effort: silence fastembed's loguru ERROR spam on a degrade
+                from loguru import logger
+
+                logger.disable("fastembed")
+            except Exception:  # noqa: BLE001 — quieting is optional, never fatal
+                pass
+            cache = _cache_dir()
+            os.makedirs(cache, exist_ok=True)
+            if not _CACHE_LOGGED:
+                _CACHE_LOGGED = True
+                print(f"ℹ semantic: model cache at {cache}", file=sys.stderr)
+            threads = int(config["semantic"].get("threads", 0)) or None
+            _MODELS[name] = TextEmbedding(
+                model_name=name, threads=threads, cache_dir=cache
+            )
+        except Exception as e:  # noqa: BLE001 — memoize the failure, degrade once
+            _MODEL_LOAD_FAILED = True
+            print(
+                f"ℹ semantic: model failed to load ({e}) — lexical-only for this session",
+                file=sys.stderr,
+            )
+            raise EmbeddingError(f"fastembed model load failed: {e}") from e
     return _MODELS[name]
 
 

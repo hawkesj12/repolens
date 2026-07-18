@@ -89,24 +89,22 @@ def _summarize(rows: list[tuple[bool, float]]) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _grep_hits()
+# _grep_corpus() / _grep_hits()
 # ═══════════════════════════════════════════════════════════════
 # The grep baseline arm: a literal, unranked-tool comparison scored the
-# same way as `find`. Over the SAME files repolens indexes (reusing
-# index._walk, so skip/gitignore rules match), count case-insensitive
-# occurrences of any query term per file (grep -i -c semantics), rank the
-# files with >=1 match by total count desc, and return the top-k as
-# {relpath} dicts. Stdlib only — no shell-out to `rg` (keeps bench
-# portable and faithful to the indexed corpus, not rg's ignore-filtered
-# view). Truncated to k so its rank_of_gold is symmetric with find's.
+# same way as `find`. _grep_corpus reads the SAME files repolens indexes
+# (reusing index._walk) ONCE — (relpath, lowercased text) — so the per-
+# query cost is only a substring count, not a full corpus re-read (an
+# O(queries × corpus_bytes) trap otherwise). _grep_hits then counts case-
+# insensitive occurrences of any query term per file (grep -i -c
+# semantics), ranks files with >=1 match by total count desc, and returns
+# the top-k as {relpath} dicts — truncated to k so rank_of_gold is
+# symmetric with find's. Stdlib only, no shell-out to `rg`.
 # ═══════════════════════════════════════════════════════════════
-def _grep_hits(config: dict, query: str, k: int) -> list[dict]:
+def _grep_corpus(config: dict) -> list[tuple[str, str]]:
     root = config["root"]
-    terms = [t for t in query.lower().split() if t]
-    if not terms:
-        return []
     max_bytes = config.get("max_file_bytes", 0)
-    counts: list[tuple[int, str]] = []
+    out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for is_code in (False, True):
         for p in _index._walk(root, config, code=is_code):
@@ -117,12 +115,20 @@ def _grep_hits(config: dict, query: str, k: int) -> list[dict]:
             try:
                 if max_bytes and p.stat().st_size > max_bytes:
                     continue
-                text = p.read_text(encoding="utf-8", errors="ignore").lower()
+                out.append(
+                    (rel, p.read_text(encoding="utf-8", errors="ignore").lower())
+                )
             except OSError:
                 continue
-            c = sum(text.count(t) for t in terms)
-            if c:
-                counts.append((c, rel))
+    return out
+
+
+def _grep_hits(corpus: list[tuple[str, str]], query: str, k: int) -> list[dict]:
+    terms = [t for t in query.lower().split() if t]
+    if not terms:
+        return []
+    counts = [(sum(text.count(t) for t in terms), rel) for rel, text in corpus]
+    counts = [(c, rel) for c, rel in counts if c]
     counts.sort(key=lambda cr: (-cr[0], cr[1]))
     return [{"relpath": rel} for _c, rel in counts[:k]]
 
@@ -139,14 +145,17 @@ ARMS = ("grep", "lexical", "hybrid")
 
 
 def run(config: dict, gold: list[dict], k: int = 8) -> dict:
-    agg = {c: {a: [] for a in ARMS} for c in CLASSES}
-    overall = {a: [] for a in ARMS}
-    per_query = []
+    agg: dict[str, dict[str, list[tuple[bool, float]]]] = {
+        c: {a: [] for a in ARMS} for c in CLASSES
+    }
+    overall: dict[str, list[tuple[bool, float]]] = {a: [] for a in ARMS}
+    per_query: list[dict] = []
+    corpus = _grep_corpus(config)  # read the corpus once, not per query
     for item in gold:
         q = item["query"]
         cls = item["class"]
         ranks = {
-            "grep": rank_of_gold(_grep_hits(config, q, k), item["gold"]),
+            "grep": rank_of_gold(_grep_hits(corpus, q, k), item["gold"]),
             "lexical": rank_of_gold(
                 find.search(config, q, k, lexical_only=True), item["gold"]
             ),

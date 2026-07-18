@@ -108,27 +108,6 @@ def has_fts5() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
-# corpus_newer_than()
-# ═══════════════════════════════════════════════════════════════
-# Stat-only staleness check: True if any indexed file (md, code, or
-# the optional sqlite DB) is newer than mtime. A LOCAL fast-path — CI
-# and `--rebuild` always rebuild regardless.
-# ═══════════════════════════════════════════════════════════════
-def corpus_newer_than(root: pathlib.Path, config: dict, mtime: float) -> bool:
-    for sq in config["sqlite_paths"]:
-        if sq.exists() and sq.stat().st_mtime > mtime:
-            return True
-    for code in (False, True):
-        for p in _walk(root, config, code):
-            try:
-                if p.stat().st_mtime > mtime:
-                    return True
-            except OSError:
-                continue
-    return False
-
-
-# ═══════════════════════════════════════════════════════════════
 # _content_hash()
 # ═══════════════════════════════════════════════════════════════
 # A cross-machine-stable change signal (blake2b, 16-byte digest) — the
@@ -158,6 +137,18 @@ def _db_sig(config: dict) -> str:
         except OSError:
             continue
     return "|".join(parts)
+
+
+def _embed_sig(config: dict) -> str:
+    """A signature of the ACTIVE embedding config (model:dims) — stored in `meta` so a
+    later model/dims change, or enabling semantic on a lexically-built index, is detected
+    and forces a backfill. Empty when the tier is off/unavailable — including after a
+    model-load failure (semantic.available() flips False), so a build whose embeddings
+    silently didn't happen is correctly seen as 'not embedded' next time."""
+    sm = config.get("semantic", {})
+    if not (sm.get("enabled") and semantic.available(config)):
+        return ""
+    return f"{sm.get('model', '')}:{sm.get('dims', '')}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -328,6 +319,9 @@ def build(
 
     tables = _index_db_tables(con, config)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (_db_sig(config),))
+    con.execute(
+        "INSERT OR REPLACE INTO meta VALUES ('embed_sig', ?)", (_embed_sig(config),)
+    )
     con.execute("INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize','0')")
     if has_fts5():
         con.execute("INSERT INTO docs(docs) VALUES('optimize')")
@@ -370,54 +364,89 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
         n, code, tables, _ = build(root, config)
         return n + code + tables, 0, (time.time() - t0) * 1000
 
-    changed = deleted = 0
     max_bytes = config.get("max_file_bytes", 0)
     sem_on = config["semantic"]["enabled"] and semantic.available(config)
+
+    # BACKFILL trigger: semantic is on but this index's embeddings don't match the active
+    # config — built lexical-first (embed_sig ""), a model/dims change, or a build whose
+    # embeddings silently didn't happen. A plain incremental only touches CHANGED files, so
+    # it would never backfill and would silently serve lexical while reporting hybrid. Force
+    # a full rebuild so hybrid actually runs. (embed_sig alone is loop-safe: after a rebuild
+    # the stored sig matches, even for a corpus that legitimately produces zero chunks.)
     if sem_on:
-        # An index built before the semantic tier has no chunk tables yet; create
-        # them (idempotent) so incremental embedding has somewhere to write.
+        stored_embed = (
+            con.execute("SELECT value FROM meta WHERE key='embed_sig'").fetchone()
+            or ("",)
+        )[0]
+        if stored_embed != _embed_sig(config):
+            con.close()
+            n, code, tables, _ = build(root, config)
+            return n + code + tables, 0, (time.time() - t0) * 1000
+
+    # DETECTION (read-only — no write lock yet): stat-gate the corpus against the files
+    # table. Only files whose (size, mtime) differ need hashing; a clean no-op reads nothing.
+    stored = {
+        r[0]: (r[1], r[2], r[3])
+        for r in con.execute("SELECT relpath, size, mtime, hash FROM files")
+    }
+    seen: set[str] = set()
+    stat_changed: list[tuple[str, pathlib.Path, int, float, bool]] = []
+    for is_code in (False, True):
+        for p in _walk(root, config, code=is_code):
+            rel = str(p.relative_to(root))
+            seen.add(rel)
+            try:
+                size, mtime = _stat(p)
+            except OSError:
+                continue
+            prev = stored.get(rel)
+            if prev and prev[0] == size and abs(prev[1] - mtime) < 1e-6:
+                continue  # stat-gate: unchanged, no read/hash
+            stat_changed.append((rel, p, size, mtime, is_code))
+    to_delete = set(stored) - seen
+    cur_db_sig = _db_sig(config)
+    prev_db_sig = (
+        con.execute("SELECT value FROM meta WHERE key='db_sig'").fetchone() or ("",)
+    )[0]
+
+    # TRUE no-op — nothing stat-changed, nothing deleted, DB unchanged. Take NO write lock
+    # (a deferred/immediate BEGIN would still fsync a WAL write and serialize concurrent
+    # find-refreshers). This is the common agent case: find repeatedly, nothing changed.
+    if not stat_changed and not to_delete and cur_db_sig == prev_db_sig:
+        con.close()
+        return 0, 0, (time.time() - t0) * 1000
+
+    # WRITE phase — there's real work, so now acquire the write lock. BEGIN IMMEDIATE takes
+    # the RESERVED lock up front; a deferred BEGIN would read-then-upgrade, and SQLite
+    # fast-fails that upgrade with SQLITE_BUSY *without* honoring busy_timeout when another
+    # session holds the lock — so IMMEDIATE is what makes busy_timeout actually serialize.
+    changed = deleted = 0
+    if sem_on:
+        # An index built before the semantic tier has no chunk tables yet; create them
+        # (idempotent) so incremental embedding has somewhere to write.
         semantic.ensure_schema(con, config)
-    # BEGIN IMMEDIATE takes the write (RESERVED) lock up front. A deferred BEGIN would
-    # read first (SHARED) then upgrade on the first write, and SQLite fast-fails that
-    # upgrade with SQLITE_BUSY *without* honoring busy_timeout when another session holds
-    # the lock — so concurrent refreshers would silently give up and serve a stale index.
-    # IMMEDIATE makes busy_timeout actually serialize them.
     con.execute("BEGIN IMMEDIATE")
     try:
-        stored = {
-            r[0]: (r[1], r[2], r[3])
-            for r in con.execute("SELECT relpath, size, mtime, hash FROM files")
-        }
-        seen: set[str] = set()
-        for is_code in (False, True):
-            for p in _walk(root, config, code=is_code):
-                rel = str(p.relative_to(root))
-                seen.add(rel)
-                try:
-                    size, mtime = _stat(p)
-                except OSError:
-                    continue
-                prev = stored.get(rel)
-                if prev and prev[0] == size and abs(prev[1] - mtime) < 1e-6:
-                    continue  # stat-gate: unchanged, no read
-                h = _content_hash(p)
-                if prev and prev[2] == h:
-                    con.execute(
-                        "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
-                    )  # touched but identical (e.g. after a clone) — refresh mtime only
-                    continue
-                con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
-                con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
-                if sem_on:
-                    semantic.delete_doc(con, rel)  # drop the doc's old chunk-set first
-                if _insert_doc(con, root, p, is_code, config, max_bytes):
-                    con.execute(
-                        "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
-                        (rel, size, mtime, h),
-                    )
-                    changed += 1
+        for rel, p, size, mtime, is_code in stat_changed:
+            h = _content_hash(p)
+            prev = stored.get(rel)
+            if prev and prev[2] == h:
+                con.execute(
+                    "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
+                )  # touched but identical (e.g. after a clone) — refresh mtime only
+                continue
+            con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
+            con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
+            if sem_on:
+                semantic.delete_doc(con, rel)  # drop the doc's old chunk-set first
+            if _insert_doc(con, root, p, is_code, config, max_bytes):
+                con.execute(
+                    "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                    (rel, size, mtime, h),
+                )
+                changed += 1
 
-        for rel in set(stored) - seen:  # delete-reconcile
+        for rel in to_delete:  # delete-reconcile
             con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
             con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
             con.execute("DELETE FROM files WHERE relpath=?", (rel,))
@@ -425,14 +454,12 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
                 semantic.delete_doc(con, rel)  # cascade-delete orphaned chunks/vectors
             deleted += 1
 
-        cur_sig = _db_sig(config)
-        prev_sig = (
-            con.execute("SELECT value FROM meta WHERE key='db_sig'").fetchone() or ("",)
-        )[0]
-        if cur_sig != prev_sig:
+        if cur_db_sig != prev_db_sig:
             con.execute("DELETE FROM docs WHERE kind='db-table'")
             _index_db_tables(con, config)
-            con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (cur_sig,))
+            con.execute(
+                "INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (cur_db_sig,)
+            )
 
         w = int(
             (
