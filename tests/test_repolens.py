@@ -642,6 +642,26 @@ def test_load_config_semantic_defaults_and_override(tmp_path):
     assert cfg["semantic"]["threads"] == 4 and cfg["semantic"]["chunk_tokens"] == 400
 
 
+def test_semantic_prefix_configurable_per_model(tmp_path):
+    # nomic auto-defaults its required task prefixes when none are configured...
+    _root, cfg = _repo(tmp_path, '[semantic]\nmodel = "nomic-embed-text"\n')
+    assert semantic._query_prefix(cfg, "q") == "search_query: q"
+    assert semantic._doc_prefix(cfg, ["d"]) == ["search_document: d"]
+    # ...bge (and any other unconfigured non-nomic model) gets RAW text — a prefix there hurts.
+    _root, cfg = _repo(tmp_path, '[semantic]\nmodel = "bge-m3"\n')
+    assert semantic._query_prefix(cfg, "q") == "q"
+    assert semantic._doc_prefix(cfg, ["d"]) == ["d"]
+    # An explicit query_prefix (mxbai/arctic/E5) is honored; unset doc_prefix stays raw.
+    _root, cfg = _repo(
+        tmp_path,
+        '[semantic]\nmodel = "mxbai-embed-large"\n'
+        'query_prefix = "Represent this sentence for searching relevant passages: "\n',
+    )
+    assert cfg["semantic"]["query_prefix"].startswith("Represent this sentence")
+    assert semantic._query_prefix(cfg, "q").endswith("passages: q")
+    assert semantic._doc_prefix(cfg, ["d"]) == ["d"]  # no doc_prefix → raw
+
+
 def test_chunk_one_chunk_per_heading_section():
     doc = "preamble text here\n\n# Alpha\n\nalpha body\n\n## Beta\n\nbeta body\n"
     chunks = chunk.chunk_document(doc)

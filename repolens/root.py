@@ -206,7 +206,14 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     semantic = dict(DEFAULT_SEMANTIC)
     if "enabled" in sm:
         semantic["enabled"] = bool(sm["enabled"])
-    for key in ("model", "provider", "endpoint", "api_key_env"):
+    for key in (
+        "model",
+        "provider",
+        "endpoint",
+        "api_key_env",
+        "query_prefix",
+        "doc_prefix",
+    ):
         if sm.get(key):
             semantic[key] = str(sm[key])
     for k in ("dims", "chunk_tokens", "threads"):

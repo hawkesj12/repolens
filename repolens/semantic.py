@@ -318,23 +318,32 @@ def _model(config: dict):
 # ═══════════════════════════════════════════════════════════════
 # _doc_prefix() / _query_prefix()
 # ═══════════════════════════════════════════════════════════════
-# nomic-embed-text REQUIRES task prefixes ("search_document: " on a
-# passage, "search_query: " on a query) — fastembed does NOT add them,
-# and omitting them quietly tanks retrieval quality (the #1 nomic
-# mistake). Applied ONLY for nomic models; bge/others want raw text, so
-# a prefix there would hurt. The prefix is embedding-only — the chunk
-# table always stores the ORIGINAL text.
+# Many retrieval models REQUIRE an asymmetric query/document prefix and
+# quietly tank without it — nomic ("search_query: "/"search_document: "),
+# mxbai ("Represent this sentence for searching relevant passages: " on
+# queries), arctic-embed ("query: " on queries), E5, etc. Omitting the
+# prefix is the #1 embedding mistake, and applying the WRONG one is just
+# as bad — so `[semantic].query_prefix` / `doc_prefix` let each model
+# declare its own. When unset, nomic auto-defaults (back-compat) and
+# every other model gets raw text (correct for bge, which wants none).
+# The prefix is embedding-only — the chunk table stores ORIGINAL text.
 # ═══════════════════════════════════════════════════════════════
 def _is_nomic(config: dict) -> bool:
     return "nomic" in str(config["semantic"]["model"]).lower()
 
 
 def _doc_prefix(config: dict, texts: list[str]) -> list[str]:
-    return [f"search_document: {t}" for t in texts] if _is_nomic(config) else texts
+    p = config["semantic"].get("doc_prefix")
+    if p is None:  # unconfigured → nomic auto-default, else raw
+        p = "search_document: " if _is_nomic(config) else ""
+    return [f"{p}{t}" for t in texts] if p else list(texts)
 
 
 def _query_prefix(config: dict, query: str) -> str:
-    return f"search_query: {query}" if _is_nomic(config) else query
+    p = config["semantic"].get("query_prefix")
+    if p is None:  # unconfigured → nomic auto-default, else raw
+        p = "search_query: " if _is_nomic(config) else ""
+    return f"{p}{query}" if p else query
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Configurable per-model embedding prefixes (`[semantic].query_prefix` / `doc_prefix`).**
+  Retrieval models need different asymmetric query/document instructions; previously only
+  nomic's were applied and every other model (HTTP or fastembed) got raw text. nomic still
+  auto-defaults its `search_query:` / `search_document:` prefixes for back-compat; bge and
+  most others correctly stay raw when unset; mxbai/arctic/E5-family models now declare their
+  own. Tests cover the prefix matrix (`semantic.py`, `root.py`).
+- **Embedding-model bakeoff in the README** ("Which embedding model — and does the provider
+  matter?"). A 6-way comparison (mxbai-embed-large · arctic-embed2 · bge-m3 · bge-base ·
+  nomic) on a 123-page prose corpus with a **vocabulary-independent 30-query gold set**.
+  Finding: retrieval quality is a near-tie across the top models (including the zero-config
+  fastembed default); the real differentiator is **provider speed** — Ollama (GPU + resident)
+  vs fastembed (CPU + per-query reload). Recommendation: Ollama + `mxbai-embed-large` for
+  query-heavy/agent use; fastembed + `bge-base-en-v1.5` stays the zero-config default.
 - **`repolens index --threads N`** — override `[semantic].threads` (the fastembed CPU-core
   cap) for one build; `--threads 0` uses all cores for a fast one-off rebuild.
 - **Back-compat read of a pre-0.11 `.repometa.toml`.** When `.repolens.toml` is absent,

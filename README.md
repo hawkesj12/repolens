@@ -62,6 +62,33 @@ Two honest takeaways, with the uncertainty attached:
 
 Run `repolens bench` on your own repo — that's the number that matters, not this one.
 
+## Which embedding model — and does the provider matter?
+
+The hybrid tier works with any embedder, so a second benchmark asks _which one_. On a **123-page prose corpus** with a **30-query gold set phrased without each target page's own vocabulary** — so only _meaning_ finds them, the case where the embedding model actually earns its keep — six setups were scored:
+
+| model                                    | provider        | dims | overall MRR | conceptual | exact | build |
+| ---------------------------------------- | --------------- | ---- | ----------- | ---------- | ----- | ----- |
+| **mxbai-embed-large** ⭐                 | Ollama (GPU)    | 1024 | 0.621       | **0.540**  | 0.875 | 319s  |
+| snowflake-arctic-embed2                  | Ollama (GPU)    | 1024 | 0.614       | 0.540      | 1.000 | 373s  |
+| bge-m3                                   | Ollama (GPU)    | 1024 | 0.604       | 0.515      | 1.000 | 368s  |
+| bge-base-en-v1.5 _(used optimally)_      | fastembed (CPU) | 768  | 0.637       | 0.531      | 1.000 | —     |
+| bge-base-en-v1.5 _(zero-config default)_ | fastembed (CPU) | 768  | 0.610       | 0.528      | 0.875 | 1257s |
+| nomic-embed-text                         | Ollama (GPU)    | 768  | 0.568       | 0.510      | 0.750 | 134s  |
+
+`conceptual` = the 20 meaning-only queries (the real signal); `exact` = 4 literal-term controls (n=4, noisy); overall n=30. **Every model got its correct query prefix** (mxbai/bge `Represent this sentence…`, nomic `search_query:`, arctic `query:`, bge-m3 none) — a prefix-blind harness measures "which model tolerates being used _wrong_," not which is best (see `[semantic].query_prefix` under [Configure](#configure-repolenstoml)).
+
+**Two takeaways:**
+
+1. **On quality, the top five tie.** They cluster at **0.60–0.64 overall / 0.53–0.54 conceptual** — inside one query's worth of noise at n=30; only nomic clearly trails. The embedding model barely moves quality here, and the **zero-config fastembed default ties the field.**
+2. **The real gap is speed, not quality.** fastembed runs on **CPU** — the full build took **~21 minutes** vs Ollama's **2–6 on the GPU** — and that's before fastembed's per-`find` cold reload (~1–2s) vs Ollama's resident **~275ms**.
+
+So the guidance is about the _provider_, not a quality gap:
+
+- **Zero-config → `fastembed` + `bge-base-en-v1.5`** (the default). Competitive quality, nothing to install; CPU-slow to build, reloads per query. Fine for a small or one-shot repo.
+- **Query-heavy / agent use → Ollama + `mxbai-embed-large`.** Top conceptual score (tied), English-specialized (no wasted multilingual capacity), resident on the GPU. Set `provider = "http"` + the model's `query_prefix`.
+
+The gold set + `repolens bench --set <gold>` reproduce every row.
+
 ## Who it's for
 
 A repo that mixes **prose/knowledge with code** and is worked by an **agent that greps on demand rather than maintaining a semantic index** — [Claude Code](https://claude.com/claude-code) being the prime example. There, `repolens` gives a _ranked, described_ answer across docs + code + data (and, when you opt in, your gitignored notes), plus lightweight enforced hygiene.
@@ -124,6 +151,12 @@ require = ["^\\*\\*Date:\\*\\*"]  # regex a conforming doc must contain (a warn 
 # provider = "http"                 # OR bring your own: OpenAI-compatible /v1/embeddings
 # endpoint = "http://localhost:11434/v1/embeddings"   # e.g. local Ollama (GPU) or a metered API
 # api_key_env = "OPENAI_API_KEY"    # env var holding the key (never stored here)
+# query_prefix / doc_prefix         # asymmetric instruction some models require on
+#                                   # queries vs docs. nomic auto-applies its own; set
+#                                   # these for others (wrong/missing prefix tanks quality):
+#   mxbai-embed-large, bge-*-en-v1.5 → query_prefix = "Represent this sentence for searching relevant passages: "
+#   snowflake-arctic-embed2          → query_prefix = "query: "
+#   bge-m3 and most others           → none (leave unset)
 
 # SQLite integration — index table/column NAMES (schema only, read-only).
 # `repolens init` AUTO-DISCOVERS the DBs in your repo (including gitignored
