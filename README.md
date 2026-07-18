@@ -1,5 +1,10 @@
 # repolens
 
+[![CI](https://github.com/hawkesj12/repolens/actions/workflows/ci.yml/badge.svg)](https://github.com/hawkesj12/repolens/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/repolens.svg)](https://pypi.org/project/repolens/)
+[![Python](https://img.shields.io/pypi/pyversions/repolens.svg)](https://pypi.org/project/repolens/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Ranked hybrid search + a typed hygiene linter for a repo's whole corpus.** One local index over your **docs, code purpose-lines, and database schema**, so you can ask _"where does X live?"_ in plain words and get the right few files back — ranked and described — instead of sifting a wall of `grep` hits.
 
 Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-code)) works alongside a growing pile of markdown and greps on demand rather than keeping a semantic index. **Hybrid search ships by default** — `pip install repolens` gives you ranked BM25 fused with semantic embeddings out of the box (`fastembed` + `sqlite-vec`, both CPU, no service, no keys). It degrades to lexical-only (BM25) if the model can't load, and `--lexical` forces BM25 on demand. The first run downloads a ~200MB model once (cached durably); everything else is offline.
