@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Private, opt-in event logging (`[log].enabled`).** When on, repolens appends one
+  JSON line per `find` (query, mode, hits + scores, timing) and per embed (file, chunk
+  count, model, timing) to `.repolens/events.jsonl` — inside the gitignored cache dir,
+  so it stays local and is never committed. Off by default; writes never raise (a
+  logging failure can't break a search). The find log accumulates the real queries run
+  against a repo — future material for growing the benchmark from actual usage. New
+  `repolens/log.py`; hooked in `cmd_find` and `semantic.embed_doc`.
 - **`find` shows the matching passage with each hit.** A result now carries the
   passage that actually matched, not just the file path — a semantic hit shows its
   best-matching chunk, a lexical hit shows the FTS5 excerpt around the terms, trimmed
@@ -19,7 +26,7 @@ All notable changes to this project are documented here. The format follows
   recall@k + MRR in THREE modes against the same corpus — a literal **grep** baseline,
   **lexical** (BM25), and **hybrid** (BM25 + semantic), so the table reads as the
   progression grep → BM25 → hybrid. Measured on this repo's own corpus (bge-base, k=8):
-  overall recall@8 grep 72% / lexical 50% / hybrid 100%; MRR 0.39 / 0.37 / 0.68. Grep
+  overall recall@8 grep 72% / lexical 50% / hybrid 100%; MRR 0.39 / 0.38 / 0.67. Grep
   beats the lexical arm (it reads full file bodies, which the code index reduces to a
   purpose-line + docstring), but hybrid beats grep decisively.
 - **Code docstrings are indexed and embedded.** A code file used to be searchable by

@@ -57,6 +57,13 @@ DEFAULT_CONFIG = """\
 # endpoint = "http://localhost:11434/v1/embeddings"
 # model = "nomic-embed-text"        # the model your endpoint serves
 # api_key_env = "OPENAI_API_KEY"    # env var holding the key (never store it here)
+
+# Private, local event log (opt-in). When on, repolens appends one JSON line per `find`
+# and per embed to .repolens/events.jsonl — inside the gitignored cache dir, so it stays
+# local and is never committed. Useful for debugging retrieval; the find log also grows a
+# real benchmark from the queries you actually run. Off by default.
+# [log]
+# enabled = true
 """
 
 

@@ -199,6 +199,12 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     except (TypeError, ValueError):
         pass
 
+    # `[log]` — optional, private local event log (find + embed). Off by default; when
+    # on, repolens.log appends JSONL to the gitignored .repolens/ cache dir.
+    lg = data.get("log", {})
+    lg = lg if isinstance(lg, dict) else {}
+    logcfg = {"enabled": bool(lg.get("enabled", False))}
+
     return {
         "root": root,
         "index_path": index_path,
@@ -210,4 +216,5 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "include_gitignored": include_gitignored,
         "max_file_bytes": max_file_bytes,
         "semantic": semantic,
+        "log": logcfg,
     }

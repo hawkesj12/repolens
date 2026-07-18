@@ -19,6 +19,7 @@ from repolens import (
     frontmatter,
     index,
     lint,
+    log,
     purpose,
     root,
     schema,
@@ -1164,3 +1165,43 @@ def test_bench_grep_arm(tmp_path, monkeypatch):
     assert grep_rank["zzznope"] is None  # literal grep can't find an absent term
     report = bench.format_report(result)
     assert "grep R@k" in report and "hyb R@k" in report
+
+
+def test_log_event_writes_valid_jsonl_when_enabled(tmp_path):
+    _root, cfg = _repo(tmp_path, "[log]\nenabled = true\n")
+    log.event(cfg, "find", query="hello", mode="hybrid", n_hits=2)
+    logpath = cfg["index_path"].parent / "events.jsonl"
+    assert logpath.exists()
+    rec = json.loads(logpath.read_text().strip())
+    assert rec["type"] == "find" and rec["query"] == "hello" and rec["n_hits"] == 2
+    assert "ts" in rec  # ISO-local timestamp present
+
+
+def test_log_event_noop_when_disabled(tmp_path):
+    _root, cfg = _repo(tmp_path, "")  # no [log] block → default off
+    assert cfg["log"]["enabled"] is False
+    log.event(cfg, "find", query="x")
+    assert not (cfg["index_path"].parent / "events.jsonl").exists()
+
+
+def test_log_event_never_raises_on_bad_path(tmp_path):
+    _root, cfg = _repo(tmp_path, "[log]\nenabled = true\n")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")  # a FILE where the log dir would need to be
+    cfg["index_path"] = blocker / "sub" / "index.db"  # parent mkdir must fail
+    log.event(cfg, "embed", relpath="a.md")  # swallowed — must not raise
+
+
+def test_cmd_find_logs_the_query(tmp_path, monkeypatch):
+    _root, cfg = _repo(
+        tmp_path, "[log]\nenabled = true\n", {"a.md": "# A\n\nhello world\n"}
+    )
+    index.build(tmp_path, cfg)
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    cli.main(["find", "hello"])
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".repolens" / "events.jsonl").read_text().splitlines()
+    ]
+    finds = [e for e in events if e["type"] == "find"]
+    assert finds and finds[-1]["query"] == "hello"

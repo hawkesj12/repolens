@@ -43,10 +43,10 @@ Scores hybrid vs lexical `find` on a committed gold set (`benchmarks/acceptance.
 | arm                          | overall recall@8 | overall MRR |
 | ---------------------------- | ---------------- | ----------- |
 | grep (literal)               | 72%              | 0.39        |
-| lexical (BM25)               | 50%              | 0.37        |
-| **hybrid (BM25 + semantic)** | **100%**         | **0.68**    |
+| lexical (BM25)               | 50%              | 0.38        |
+| **hybrid (BM25 + semantic)** | **100%**         | **0.67**    |
 
-Grep is a stronger baseline than you'd expect — it reads full file bodies, so it actually beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source). **Hybrid still beats grep decisively** — 100% vs 72% recall, 0.68 vs 0.39 MRR — because the embeddings recover the conceptual and paraphrase queries neither literal tool can reach. **Honestly, though:** that's one small corpus and 18 queries — a real, reproducible signal, not a statistically significant study. Run `repolens bench` on your own repo and see.
+Grep is a stronger baseline than you'd expect — it reads full file bodies, so it actually beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source). **Hybrid still beats grep decisively** — 100% vs 72% recall, 0.67 vs 0.39 MRR — because the embeddings recover the conceptual and paraphrase queries neither literal tool can reach. **Honestly, though:** that's one small corpus and 18 queries — a real, reproducible signal, not a statistically significant study. Run `repolens bench` on your own repo and see.
 
 ## Who it's for
 
@@ -131,6 +131,12 @@ A ready-to-drop version is in [`docs/agent-rule-template.md`](docs/agent-rule-te
 ## How the index stays correct
 
 The index (`.repolens/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. WAL is what lets many agent sessions read (and the odd one refresh) the same index concurrently without locking each other out. The same content-hash drives embeddings (hybrid is on by default) — a changed file is re-chunked (**section-bounded**: chunks split on Markdown headings and never cross one, ~512 tokens each) and re-embedded, its vectors stored via `sqlite-vec` (or the numpy fallback); `find` fuses the BM25 and dense results with RRF, rolling per-chunk hits up to their parent document. A deleted file's chunks/vectors cascade away. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
+
+## Private logging (opt-in)
+
+Set `[log].enabled = true` and repolens appends one JSON line per `find` and per embed to `.repolens/events.jsonl` — inside the gitignored cache dir, so the log is **local and private** (never committed, never leaves your machine). Off by default.
+
+A `find` event records the query, mode, the hits + scores, and timing; an `embed` event records the file, chunk count, model, and timing. Writes never raise, so logging can't break a search. Beyond debugging retrieval, the find log accumulates the **real queries** you and your agents run against the repo — far better data for growing `benchmarks/acceptance.jsonl` than hand-written gold.
 
 ## Roadmap
 

@@ -15,6 +15,7 @@ from . import (
     find,
     index,
     lint,
+    log,
     root,
     templates,
 )
@@ -153,6 +154,16 @@ def cmd_find(args) -> int:
         status = "refresh failed — stale index"
     hits = find.search(cfg, query, args.k, lexical_only=args.lexical)
     ms = (time.time() - t0) * 1000
+    log.event(
+        cfg,
+        "find",
+        query=query,
+        mode="lexical" if args.lexical else "hybrid",
+        k=args.k,
+        n_hits=len(hits),
+        hits=[{"relpath": h["relpath"], "score": h["score"]} for h in hits],
+        ms=round(ms),
+    )
     if args.json:
         print(json.dumps({"query": query, "status": status, "hits": hits}, indent=2))
         return 0 if hits else 1

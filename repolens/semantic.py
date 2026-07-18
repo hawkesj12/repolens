@@ -349,6 +349,11 @@ def embed_doc(con: sqlite3.Connection, relpath: str, text: str, config: dict) ->
     if not chunks:
         return
     _announce()
+    import time as _time
+
+    from . import log as _log
+
+    t0 = _time.time()
     vecs = _embed_texts(config, _doc_prefix(config, [c for _ix, c in chunks]))
     vec0 = active_path(config) == "vec0"
     if vec0:
@@ -369,6 +374,14 @@ def embed_doc(con: sqlite3.Connection, relpath: str, text: str, config: dict) ->
                 "INSERT INTO vectors(rowid, embedding) VALUES (?,?)",
                 (cur.lastrowid, blob),
             )
+    _log.event(
+        config,
+        "embed",
+        relpath=relpath,
+        chunks=len(chunks),
+        model=config["semantic"]["model"],
+        ms=round((_time.time() - t0) * 1000),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
