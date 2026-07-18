@@ -38,11 +38,22 @@ Scores hybrid vs lexical `find` on a committed gold set (`benchmarks/acceptance.
 
 ## Does it help? (don't trust me — run `repolens bench`)
 
-Rather than claim it helps, repolens ships a benchmark you run. `repolens bench` scores every query **three ways against the same corpus** — a literal **grep** baseline, **lexical** `find` (BM25), and **hybrid** `find` (BM25 + semantic) — reporting recall@k + MRR per class, so you see the progression grep → BM25 → hybrid. The gold set is small and self-authored (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs on this repo's own files), so treat it as a **directional signal on one corpus, not a general claim.**
+Rather than claim it helps, repolens ships a benchmark you run. `repolens bench` scores every query **three ways against the same corpus** — a literal **grep** baseline (ranked by distinct query terms matched, a fair reading of grep output), **lexical** `find` (BM25), and **hybrid** `find` (BM25 + semantic) — and reports recall@k, MRR, **and a bootstrap 95% CI on the deltas**. The gold set is small and self-authored (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs on this repo's own files), so read the numbers as a **directional signal on one corpus, not a general claim.**
 
-On this repo (bge-base, k=8), hybrid ranks the gold document higher than either baseline — overall **MRR ≈ 0.67 hybrid vs 0.39 grep vs 0.34 lexical.** MRR is the number to watch, not recall@8: the margin holds as you tighten k (hybrid leads at k=1, 3, 5, 8), whereas a raw "recall@8" flatters a 22-file corpus where the top 8 is already a third of everything. Grep is a tougher baseline than you'd expect — it reads full file bodies, so it beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source) — but hybrid still wins, because the embeddings recover the conceptual and paraphrase queries neither literal tool reaches.
+On this repo (bge-base, k=8):
 
-Run `repolens bench` on your own repo to see whether the semantic tier earns its keep there — that's the number that matters, not this one.
+| arm                  | recall@8 | MRR  |
+| -------------------- | -------- | ---- |
+| grep (distinct-term) | 94%      | 0.52 |
+| lexical (BM25)       | 50%      | 0.34 |
+| hybrid               | 100%     | 0.67 |
+
+Two honest takeaways, with the uncertainty attached:
+
+- **Hybrid clearly beats BM25** — ΔMRR **+0.33, 95% CI [+0.17, +0.50]** (excludes zero). Lexical is what you fall back to _without_ the model, so this is the result that justifies shipping semantic on by default.
+- **Against a fair grep, hybrid wins on recall (100% vs 94%) but its MRR edge is within the noise** — ΔMRR **+0.16, 95% CI [−0.01, +0.33]** (crosses zero at n=18). Grep is a stronger literal baseline than most tools admit; hybrid's real advantage is recall and the meaning-based queries grep can't reach, not a ranking blowout.
+
+Run `repolens bench` on your own repo — that's the number that matters, not this one.
 
 ## Who it's for
 
@@ -134,7 +145,7 @@ The index (`.repolens/index.db`, gitignored) is a **cache derived from your file
 
 Set `[log].enabled = true` and repolens appends one JSON line per `find` and per embed to `.repolens/events.jsonl` — inside the gitignored cache dir, so the log is **local and private** (never committed, never leaves your machine). Off by default.
 
-A `find` event records the query, mode, the hits + scores, and timing; an `embed` event records the file, chunk count, model, and timing. Writes never raise, so logging can't break a search. Beyond debugging retrieval, the find log accumulates the **real queries** you and your agents run against the repo — far better data for growing `benchmarks/acceptance.jsonl` than hand-written gold.
+A `find` event records the query, mode, the matched **file paths + scores**, and timing; an `embed` event records the file, chunk count, model, and timing. It's **metadata only — the matched passage text is never written to the log** (relevant if you enable `include_gitignored` over private notes: the log captures which files matched and your query, not their contents). Writes never raise, so logging can't break a search. Beyond debugging retrieval, the find log accumulates the **real queries** you and your agents run against the repo — far better data for growing `benchmarks/acceptance.jsonl` than hand-written gold.
 
 ## Roadmap
 

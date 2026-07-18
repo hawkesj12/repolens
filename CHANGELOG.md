@@ -54,6 +54,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`find` no longer hangs behind a proxy that black-holes HuggingFace.** A network that
+  accepts the connection then drops it made the first model load hang with no timeout, and
+  the per-process failure flag re-hung every subsequent `find`. Now: a HuggingFace
+  read-timeout fails a stalled connection fast (without aborting a slow-but-flowing
+  download), a wall-clock backstop (env `REPOLENS_MODEL_LOAD_TIMEOUT`) catches any other
+  stall, and the failure is **persisted to a TTL sentinel file** so sibling processes
+  degrade to lexical immediately instead of re-hanging — self-healing after the TTL.
+- **`repolens index` degrades on a locked index instead of crashing.** Under write-lock
+  contention it raised an uncaught `database is locked` traceback (while `find` already
+  degraded); it now prints "index busy" and exits non-zero.
+- **No thundering-herd re-embed under concurrency.** One changed file made every concurrent
+  `find` redundantly re-embed it off a stale pre-lock snapshot; the write phase now
+  re-reads the current stored hash under the lock and skips a file a peer already committed.
 - **Enabling semantic on a lexically-built index now backfills embeddings.** An index
   built lexical-first (or after a model/dims change) silently kept running lexical while
   reporting hybrid, because incremental indexing only touches _changed_ files. An
@@ -82,6 +95,13 @@ IMMEDIATE` + commit even when nothing changed, serializing concurrent `find`-ref
 
 ### Changed
 
+- **Fairer grep baseline + reported uncertainty in `bench`.** The grep arm now ranks by
+  **distinct query terms matched** (not sum-of-raw-counts, which understated a reasonable
+  grep by ~30%), and `bench` prints a deterministic bootstrap **95% CI** on the MRR deltas.
+  The honest result: hybrid clearly beats BM25 (ΔMRR +0.33, CI [+0.17, +0.50], excludes
+  zero — this is what justifies default-on), but against a fair grep its MRR edge is within
+  noise (ΔMRR +0.16, CI [−0.01, +0.33]); hybrid's real win over grep is recall (100% vs
+  94%) and the meaning-based queries grep can't reach.
 - **Benchmark framing softened + Ollama recommended for heavy use.** The README no longer
   leads with "100% recall@8" (which flatters a 22-file corpus); it leads with MRR + the
   k-stable margin and frames the gold set as a directional signal, not a claim. Added
