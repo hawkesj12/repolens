@@ -26,6 +26,7 @@ document retrieval pattern that makes the two sides fusable.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 
@@ -43,6 +44,7 @@ _VEC_BACKEND: str | None = (
     None  # cached 'vec0' | 'blob' (STORAGE probe; config-independent)
 )
 _ANNOUNCED = False
+_CACHE_LOGGED = False
 
 
 class EmbeddingError(RuntimeError):
@@ -64,19 +66,19 @@ def _sem(config: dict | None) -> dict:
 # so legacy no-arg callers still get the fastembed check.
 # ═══════════════════════════════════════════════════════════════
 def available(config: dict | None = None) -> bool:
-    try:
-        import numpy  # noqa: F401
-    except Exception:  # noqa: BLE001
+    # Answer "is the tier installed?" WITHOUT importing the heavy stack. `find` calls
+    # this on every refresh (even --lexical, even a no-op), so a real `import fastembed`
+    # here taxes every search ~0.3s just to return a boolean. find_spec locates the
+    # module without executing it; the actual numpy/fastembed imports happen where
+    # they're used (_model, _normalize, knn), reached only when something truly embeds.
+    import importlib.util
+
+    if importlib.util.find_spec("numpy") is None:
         return False
     sm = _sem(config)
     if sm.get("provider") == "http":
         return bool(sm.get("endpoint"))
-    try:
-        import fastembed  # noqa: F401
-
-        return True
-    except Exception:  # noqa: BLE001 — extra absent => tier off, find stays lexical
-        return False
+    return importlib.util.find_spec("fastembed") is not None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -168,13 +170,42 @@ def _table_exists(con: sqlite3.Connection, name: str) -> bool:
 # ONNX intra-op parallelism — a low value (default 2) keeps a big first
 # build from pinning every core; 0 means the library default (all cores).
 # ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# _cache_dir()
+# ═══════════════════════════════════════════════════════════════
+# A DURABLE model-cache dir. fastembed defaults to $TMPDIR, which the OS
+# purges — so the "one-time" ~200MB model download silently recurs after a
+# temp sweep. Resolve a stable, cross-platform location instead: an explicit
+# REPOLENS_CACHE_DIR wins outright; else XDG_CACHE_HOME (or %LOCALAPPDATA%
+# on Windows, else ~/.cache) + /repolens/fastembed. stdlib only.
+# ═══════════════════════════════════════════════════════════════
+def _cache_dir() -> str:
+    override = os.environ.get("REPOLENS_CACHE_DIR")
+    if override:
+        return override
+    base = os.environ.get("XDG_CACHE_HOME")
+    if not base:
+        base = (
+            os.environ.get("LOCALAPPDATA")
+            if os.name == "nt"
+            else os.path.expanduser("~/.cache")
+        ) or os.path.expanduser("~/.cache")
+    return os.path.join(base, "repolens", "fastembed")
+
+
 def _model(config: dict):
     name = config["semantic"]["model"]
     if name not in _MODELS:
         from fastembed import TextEmbedding
 
+        cache = _cache_dir()
+        os.makedirs(cache, exist_ok=True)
+        global _CACHE_LOGGED
+        if not _CACHE_LOGGED:
+            _CACHE_LOGGED = True
+            print(f"ℹ semantic: model cache at {cache}", file=sys.stderr)
         threads = int(config["semantic"].get("threads", 0)) or None
-        _MODELS[name] = TextEmbedding(model_name=name, threads=threads)
+        _MODELS[name] = TextEmbedding(model_name=name, threads=threads, cache_dir=cache)
     return _MODELS[name]
 
 

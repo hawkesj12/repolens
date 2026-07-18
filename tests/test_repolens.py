@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
+import sys
 
 import pytest
 
@@ -928,6 +930,63 @@ def test_index_embeds_and_cascade_deletes_chunks(tmp_path, monkeypatch):
         == 0
     )
     con.close()
+
+
+def test_available_does_not_import_fastembed():
+    # The eager-import fix: available() answers via importlib.find_spec, never
+    # `import fastembed` — so `find`'s per-search refresh doesn't pay a ~0.3s ONNX
+    # import for a boolean. Run in a fresh subprocess so sys.modules is clean
+    # regardless of other tests' real-embed paths. Invariant holds whether or not
+    # fastembed is installed (find_spec never executes the module).
+    code = (
+        "import sys; from repolens import semantic;"
+        "semantic.available({'semantic': {'enabled': True}});"
+        "assert 'fastembed' not in sys.modules, 'available() imported fastembed';"
+        "print('OK')"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "OK" in out.stdout
+
+
+def test_build_incremental_releases_lock_on_error(tmp_path, monkeypatch):
+    # A mid-transaction failure must roll back + close the write connection, not leak
+    # the WAL write lock — else concurrent sessions' refreshes would hang. After a
+    # forced error, a fresh build_incremental on the same index must succeed.
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\none\n"})
+    index.build(tmp_path, cfg)
+    (tmp_path / "b.md").write_text("# B\n\ntwo\n")  # a change to force an insert
+    real_insert = index._insert_doc
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated disk-full mid-transaction")
+
+    monkeypatch.setattr(index, "_insert_doc", _boom)
+    with pytest.raises(RuntimeError):
+        index.build_incremental(tmp_path, cfg)
+    monkeypatch.setattr(index, "_insert_doc", real_insert)  # restore
+    # The lock must have been released — a subsequent incremental succeeds and indexes b.
+    changed, _deleted, _ms = index.build_incremental(tmp_path, cfg)
+    assert changed >= 1
+    con = sqlite3.connect(cfg["index_path"])
+    assert (
+        con.execute("SELECT count(*) FROM docs WHERE relpath='b.md'").fetchone()[0] == 1
+    )
+    con.close()
+
+
+def test_cache_dir_is_durable_and_env_overridable(monkeypatch, tmp_path):
+    # Fix #4: the model cache must NOT land in the OS-purgeable temp dir (fastembed's
+    # default), and REPOLENS_CACHE_DIR must override it.
+    import tempfile
+
+    monkeypatch.delenv("REPOLENS_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    d = semantic._cache_dir()
+    assert tempfile.gettempdir() not in d  # not the purgeable temp dir
+    assert d.endswith(os.path.join("repolens", "fastembed"))
+    monkeypatch.setenv("REPOLENS_CACHE_DIR", str(tmp_path / "mycache"))
+    assert semantic._cache_dir() == str(tmp_path / "mycache")
 
 
 def test_hybrid_find_fuses_lexical_and_dense(tmp_path, monkeypatch):

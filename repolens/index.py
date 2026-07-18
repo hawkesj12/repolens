@@ -353,7 +353,9 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
     if not db_path.exists():
         n, code, tables, _ = build(root, config)
         return n + code + tables, 0, (time.time() - t0) * 1000
-    con = sqlite3.connect(db_path)
+    con = sqlite3.connect(
+        db_path, timeout=30
+    )  # 30s busy window from the first statement
     con.execute("PRAGMA journal_mode=WAL")
     # Wait up to 30s for the single WAL writer lock rather than the implicit 5s — a slow
     # incremental (many changed files with embedding) can hold it past 5s, and a bare
@@ -375,74 +377,84 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
         # An index built before the semantic tier has no chunk tables yet; create
         # them (idempotent) so incremental embedding has somewhere to write.
         semantic.ensure_schema(con, config)
-    con.execute("BEGIN")
-    stored = {
-        r[0]: (r[1], r[2], r[3])
-        for r in con.execute("SELECT relpath, size, mtime, hash FROM files")
-    }
-    seen: set[str] = set()
-    for is_code in (False, True):
-        for p in _walk(root, config, code=is_code):
-            rel = str(p.relative_to(root))
-            seen.add(rel)
-            try:
-                size, mtime = _stat(p)
-            except OSError:
-                continue
-            prev = stored.get(rel)
-            if prev and prev[0] == size and abs(prev[1] - mtime) < 1e-6:
-                continue  # stat-gate: unchanged, no read
-            h = _content_hash(p)
-            if prev and prev[2] == h:
-                con.execute(
-                    "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
-                )  # touched but identical (e.g. after a clone) — refresh mtime only
-                continue
+    # BEGIN IMMEDIATE takes the write (RESERVED) lock up front. A deferred BEGIN would
+    # read first (SHARED) then upgrade on the first write, and SQLite fast-fails that
+    # upgrade with SQLITE_BUSY *without* honoring busy_timeout when another session holds
+    # the lock — so concurrent refreshers would silently give up and serve a stale index.
+    # IMMEDIATE makes busy_timeout actually serialize them.
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        stored = {
+            r[0]: (r[1], r[2], r[3])
+            for r in con.execute("SELECT relpath, size, mtime, hash FROM files")
+        }
+        seen: set[str] = set()
+        for is_code in (False, True):
+            for p in _walk(root, config, code=is_code):
+                rel = str(p.relative_to(root))
+                seen.add(rel)
+                try:
+                    size, mtime = _stat(p)
+                except OSError:
+                    continue
+                prev = stored.get(rel)
+                if prev and prev[0] == size and abs(prev[1] - mtime) < 1e-6:
+                    continue  # stat-gate: unchanged, no read
+                h = _content_hash(p)
+                if prev and prev[2] == h:
+                    con.execute(
+                        "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
+                    )  # touched but identical (e.g. after a clone) — refresh mtime only
+                    continue
+                con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
+                con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
+                if sem_on:
+                    semantic.delete_doc(con, rel)  # drop the doc's old chunk-set first
+                if _insert_doc(con, root, p, is_code, config, max_bytes):
+                    con.execute(
+                        "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                        (rel, size, mtime, h),
+                    )
+                    changed += 1
+
+        for rel in set(stored) - seen:  # delete-reconcile
             con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
             con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
+            con.execute("DELETE FROM files WHERE relpath=?", (rel,))
             if sem_on:
-                semantic.delete_doc(con, rel)  # drop the doc's old chunk-set first
-            if _insert_doc(con, root, p, is_code, config, max_bytes):
-                con.execute(
-                    "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
-                    (rel, size, mtime, h),
-                )
-                changed += 1
+                semantic.delete_doc(con, rel)  # cascade-delete orphaned chunks/vectors
+            deleted += 1
 
-    for rel in set(stored) - seen:  # delete-reconcile
-        con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
-        con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))
-        con.execute("DELETE FROM files WHERE relpath=?", (rel,))
-        if sem_on:
-            semantic.delete_doc(con, rel)  # cascade-delete orphaned chunks/vectors
-        deleted += 1
-
-    cur_sig = _db_sig(config)
-    prev_sig = (
-        con.execute("SELECT value FROM meta WHERE key='db_sig'").fetchone() or ("",)
-    )[0]
-    if cur_sig != prev_sig:
-        con.execute("DELETE FROM docs WHERE kind='db-table'")
-        _index_db_tables(con, config)
-        con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (cur_sig,))
-
-    w = int(
-        (
-            con.execute(
-                "SELECT value FROM meta WHERE key='writes_since_optimize'"
-            ).fetchone()
-            or ("0",)
+        cur_sig = _db_sig(config)
+        prev_sig = (
+            con.execute("SELECT value FROM meta WHERE key='db_sig'").fetchone() or ("",)
         )[0]
-    )
-    w += changed + deleted
-    if w >= 200 and has_fts5():
-        con.execute("INSERT INTO docs(docs) VALUES('optimize')")
-        w = 0
-    con.execute(
-        "INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize', ?)", (str(w),)
-    )
-    con.commit()
-    con.close()
+        if cur_sig != prev_sig:
+            con.execute("DELETE FROM docs WHERE kind='db-table'")
+            _index_db_tables(con, config)
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('db_sig', ?)", (cur_sig,))
+
+        w = int(
+            (
+                con.execute(
+                    "SELECT value FROM meta WHERE key='writes_since_optimize'"
+                ).fetchone()
+                or ("0",)
+            )[0]
+        )
+        w += changed + deleted
+        if w >= 200 and has_fts5():
+            con.execute("INSERT INTO docs(docs) VALUES('optimize')")
+            w = 0
+        con.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('writes_since_optimize', ?)", (str(w),)
+        )
+        con.commit()
+    except Exception:
+        con.rollback()  # release the write lock on any mid-transaction failure
+        raise
+    finally:
+        con.close()
     return changed, deleted, (time.time() - t0) * 1000
 
 
