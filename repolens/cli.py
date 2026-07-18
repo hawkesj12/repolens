@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import stat
 import sys
 import time
@@ -92,16 +93,24 @@ def cmd_index(args) -> int:
         args.threads is not None
     ):  # --threads overrides the fastembed core cap for this run
         cfg["semantic"]["threads"] = args.threads
-    if args.rebuild or not cfg["index_path"].exists():
-        n, code, tables, ms = index.build(r, cfg)
-        kb = cfg["index_path"].stat().st_size / 1024
-        tbl = f" + {tables} db tables" if tables else ""
+    try:
+        if args.rebuild or not cfg["index_path"].exists():
+            n, code, tables, ms = index.build(r, cfg)
+            kb = cfg["index_path"].stat().st_size / 1024
+            tbl = f" + {tables} db tables" if tables else ""
+            print(
+                f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r)} ({kb:.0f} KB)"
+            )
+        else:
+            changed, deleted, ms = index.build_incremental(r, cfg)
+            print(f"incremental: {changed} changed · {deleted} removed in {ms:.0f} ms")
+    except sqlite3.OperationalError as e:
+        # Another process holds the write lock past busy_timeout. `find` already degrades
+        # to a read-only search; `index` should report + exit non-zero, not traceback.
         print(
-            f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r)} ({kb:.0f} KB)"
+            f"index busy — another process is writing ({e}); try again", file=sys.stderr
         )
-    else:
-        changed, deleted, ms = index.build_incremental(r, cfg)
-        print(f"incremental: {changed} changed · {deleted} removed in {ms:.0f} ms")
+        return 1
     if args.optimize:
         index.optimize(cfg)
         print("optimized index")

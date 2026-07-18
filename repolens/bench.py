@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import random
 
 from . import find
 from . import index as _index
@@ -124,13 +125,19 @@ def _grep_corpus(config: dict) -> list[tuple[str, str]]:
 
 
 def _grep_hits(corpus: list[tuple[str, str]], query: str, k: int) -> list[dict]:
+    # Rank primarily by DISTINCT query terms matched, tiebreak by total occurrences — a
+    # fair proxy for how a human reads grep output (a file hitting 2 of 3 query words beats
+    # one hitting 1 word ten times). Sum-of-raw-counts understated this baseline ~30%.
     terms = [t for t in query.lower().split() if t]
     if not terms:
         return []
-    counts = [(sum(text.count(t) for t in terms), rel) for rel, text in corpus]
-    counts = [(c, rel) for c, rel in counts if c]
-    counts.sort(key=lambda cr: (-cr[0], cr[1]))
-    return [{"relpath": rel} for _c, rel in counts[:k]]
+    scored: list[tuple[int, int, str]] = []
+    for rel, text in corpus:
+        distinct = sum(1 for t in terms if t in text)
+        if distinct:
+            scored.append((distinct, sum(text.count(t) for t in terms), rel))
+    scored.sort(key=lambda s: (-s[0], -s[1], s[2]))
+    return [{"relpath": rel} for _d, _t, rel in scored[:k]]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -189,7 +196,44 @@ def run(config: dict, gold: list[dict], k: int = 8) -> dict:
         "semantic_active": semantic.available(config),
         "classes": classes,
         "overall": {a: _summarize(overall[a]) for a in ARMS},
+        "ci": _delta_ci(per_query),
         "per_query": per_query,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# _bootstrap_ci() / _delta_ci()
+# ═══════════════════════════════════════════════════════════════
+# A DETERMINISTIC (fixed-seed) percentile bootstrap 95% CI for the mean of
+# paired per-query reciprocal-rank deltas. n=18 is small — a bare point
+# mean oversells; ship the interval so a reader sees the uncertainty. Seeded
+# so the number is reproducible run-to-run (stdlib random + statistics only).
+# ═══════════════════════════════════════════════════════════════
+def _bootstrap_ci(
+    deltas: list[float], iters: int = 2000, seed: int = 1234
+) -> tuple[float, float]:
+    n = len(deltas)
+    if n == 0:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    means = sorted(
+        sum(deltas[rng.randrange(n)] for _ in range(n)) / n for _ in range(iters)
+    )
+    return (round(means[int(0.025 * iters)], 3), round(means[int(0.975 * iters)], 3))
+
+
+def _delta_ci(per_query: list[dict]) -> dict:
+    def paired(a: str, b: str) -> dict:
+        d = [
+            reciprocal_rank(p[f"{a}_rank"]) - reciprocal_rank(p[f"{b}_rank"])
+            for p in per_query
+        ]
+        mean = round(sum(d) / len(d), 3) if d else 0.0
+        return {"delta": mean, "ci95": _bootstrap_ci(d)}
+
+    return {
+        "hybrid_minus_grep": paired("hybrid", "grep"),
+        "hybrid_minus_lexical": paired("hybrid", "lexical"),
     }
 
 
@@ -237,4 +281,11 @@ def format_report(result: dict) -> str:
         lines.append(row(c, d["grep"], d["lexical"], d["hybrid"]))
     o = result["overall"]
     lines.append(row("overall", o["grep"], o["lexical"], o["hybrid"]))
+    hg = result.get("ci", {}).get("hybrid_minus_grep")
+    if hg:
+        lo, hi = hg["ci95"]
+        lines.append(
+            f"Δ hybrid−grep MRR {hg['delta']:+.3f}  "
+            f"95% CI [{lo:+.3f}, {hi:+.3f}]  (bootstrap, n={result['n']})"
+        )
     return "\n".join(lines)

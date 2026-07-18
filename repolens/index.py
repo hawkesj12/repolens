@@ -429,11 +429,16 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
     try:
         for rel, p, size, mtime, is_code in stat_changed:
             h = _content_hash(p)
-            prev = stored.get(rel)
-            if prev and prev[2] == h:
-                con.execute(
-                    "UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel)
-                )  # touched but identical (e.g. after a clone) — refresh mtime only
+            # Re-read the CURRENT stored hash UNDER THE LOCK, not the pre-lock snapshot: while
+            # this process waited for the write lock, a peer (thundering herd — every
+            # concurrent `find` saw the same changed file) may have already committed it. If
+            # the stored hash now matches, skip the redundant delete+re-embed. Also covers the
+            # plain touched-but-identical case (same content, new mtime).
+            cur = con.execute(
+                "SELECT hash FROM files WHERE relpath=?", (rel,)
+            ).fetchone()
+            if cur and cur[0] == h:
+                con.execute("UPDATE files SET mtime=? WHERE relpath=?", (mtime, rel))
                 continue
             con.execute("DELETE FROM docs WHERE relpath=?", (rel,))
             con.execute("DELETE FROM frontmatter WHERE relpath=?", (rel,))

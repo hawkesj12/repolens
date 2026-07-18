@@ -28,7 +28,7 @@ from repolens import (
 
 
 @pytest.fixture(autouse=True)
-def _semantic_off_by_default(monkeypatch):
+def _semantic_off_by_default(monkeypatch, tmp_path):
     # Keep the suite hermetic + deterministic whether or not the [semantic] extra is
     # installed: the REAL tier is off by default, so `find` stays lexical (matching the
     # pinned rankings) and no index build downloads a model. Semantic tests opt back in
@@ -36,6 +36,10 @@ def _semantic_off_by_default(monkeypatch):
     # KNN, chunking, cascade) with a fake embedder; retrieval QUALITY is not measured here
     # and has no committed benchmark yet (see CHANGELOG 0.9.0 "Honest status").
     monkeypatch.setattr(semantic, "available", lambda *a, **k: False)
+    # Isolate the model cache + load-failure sentinel to a temp dir so no test writes to the
+    # real ~/.cache/repolens (and a simulated load failure can't poison sibling tests).
+    monkeypatch.setenv("REPOLENS_CACHE_DIR", str(tmp_path / ".rl-cache"))
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
 
 
 def _mkdb(path, tables):
@@ -1025,6 +1029,62 @@ def test_model_load_failure_memoized_no_retry_storm(monkeypatch):
     assert calls["n"] == 1  # loaded once, then memoized → no storm
 
 
+def test_model_load_failure_persists_via_sentinel(monkeypatch):
+    # B1: a load failure writes a sentinel FILE, so a sibling process (fresh
+    # _MODEL_LOAD_FAILED) degrades immediately instead of re-attempting the hanging load.
+    fastembed = pytest.importorskip("fastembed")
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
+    monkeypatch.setattr(semantic, "_MODELS", {})
+    calls = {"n": 0}
+
+    class _Boom:
+        def __init__(self, *a, **k):
+            calls["n"] += 1
+            raise RuntimeError("network black-holed")
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", _Boom)
+    cfg = {"semantic": {"enabled": True, "model": "m", "dims": 5, "threads": 0}}
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._model(cfg)
+    assert os.path.exists(semantic._sentinel_path())  # failure persisted to disk
+    assert semantic._sentinel_recent() is True
+    # simulate a NEW process: reset the in-process flag; the sentinel alone must degrade
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
+    monkeypatch.setattr(semantic, "_MODELS", {})
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._model(cfg)
+    assert calls["n"] == 1  # the sentinel short-circuited the 2nd load — no re-attempt
+
+
+def test_sentinel_expires_after_ttl(monkeypatch):
+    # B1: an old sentinel is ignored, so a transient black-hole self-heals after the TTL.
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
+    semantic._write_sentinel()
+    assert semantic._sentinel_recent() is True
+    old = __import__("time").time() - semantic._MODEL_FAIL_TTL - 10
+    os.utime(semantic._sentinel_path(), (old, old))
+    assert semantic._sentinel_recent() is False
+
+
+def test_model_load_timeout_degrades(monkeypatch):
+    # B1: a load that exceeds the wall-clock timeout degrades (EmbeddingError) instead of
+    # hanging — the black-hole case where the connection stalls mid-stream.
+    fastembed = pytest.importorskip("fastembed")
+    monkeypatch.setattr(semantic, "_MODEL_LOAD_FAILED", False)
+    monkeypatch.setattr(semantic, "_MODELS", {})
+    monkeypatch.setenv("REPOLENS_MODEL_LOAD_TIMEOUT", "0")  # any live load "times out"
+
+    class _Slow:
+        def __init__(self, *a, **k):
+            __import__("time").sleep(0.3)  # still loading when the 0s ceiling elapses
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", _Slow)
+    cfg = {"semantic": {"enabled": True, "model": "m", "dims": 5, "threads": 0}}
+    with pytest.raises(semantic.EmbeddingError):
+        semantic._model(cfg)
+    assert semantic._sentinel_recent() is True
+
+
 def test_noop_incremental_takes_no_write_lock(tmp_path):
     # #8: a no-op incremental must NOT take the write lock (else it serializes concurrent
     # find-refreshers). Hold the single WAL write lock on another connection; a no-op
@@ -1049,6 +1109,40 @@ def test_noop_incremental_takes_no_write_lock(tmp_path):
     blocker.close()
     assert not t.is_alive(), "no-op refresh blocked on a held write lock"
     assert out and out[0][:2] == (0, 0)
+
+
+def test_cmd_index_degrades_on_locked_db(tmp_path, monkeypatch, capsys):
+    # M1: `index` under write-lock contention must report + exit non-zero, not crash with an
+    # uncaught 'database is locked' traceback (find already degrades; index should too).
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\nx\n"})
+    index.build(tmp_path, cfg)
+
+    def _locked(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(index, "build_incremental", _locked)
+    rc = cli.main(["index"])
+    assert rc == 1  # non-zero, not a traceback
+    assert "busy" in capsys.readouterr().err.lower()
+
+
+def test_incremental_skips_candidate_a_peer_already_committed(tmp_path):
+    # M2: if a peer committed the same content while we waited for the lock, the post-lock
+    # re-check skips the redundant delete+re-embed (thundering-herd guard).
+    _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\none\n"})
+    index.build(tmp_path, cfg)
+    p = tmp_path / "a.md"
+    p.write_text("# a\n\ntwo changed\n")  # a real change → a stat_changed candidate
+    new_hash = index._content_hash(p)
+    # Simulate the peer having ALREADY committed this exact content: store the new hash but
+    # an old mtime, so the stat-gate still flags it but the post-lock hash check matches.
+    con = sqlite3.connect(cfg["index_path"])
+    con.execute("UPDATE files SET hash=?, mtime=0 WHERE relpath='a.md'", (new_hash,))
+    con.commit()
+    con.close()
+    changed, deleted, _ = index.build_incremental(tmp_path, cfg)
+    assert changed == 0  # re-check matched the peer's hash → no redundant re-embed
 
 
 def test_cmd_index_threads_flag_overrides(tmp_path, monkeypatch):
@@ -1252,6 +1346,34 @@ def test_bench_grep_arm(tmp_path, monkeypatch):
     assert grep_rank["zzznope"] is None  # literal grep can't find an absent term
     report = bench.format_report(result)
     assert "grep R@k" in report and "hyb R@k" in report
+
+
+def test_bench_reports_deterministic_bootstrap_ci(tmp_path, monkeypatch):
+    # M4: run() carries a bootstrap CI on the hybrid−grep MRR delta; it's a valid interval,
+    # reproducible run-to-run (seeded), and rendered in the report.
+    _force_blob(monkeypatch)
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"alpha.md": "# alpha\n\nalpha fox\n", "beta.md": "# beta\n\nbeta hound\n"},
+    )
+    index.build(tmp_path, cfg)
+    gold = [
+        {"query": "alpha", "gold": ["alpha.md"], "class": "exact"},
+        {"query": "hound", "gold": ["beta.md"], "class": "conceptual"},
+    ]
+    r1 = bench.run(cfg, gold, k=5)
+    hg = r1["ci"]["hybrid_minus_grep"]
+    lo, hi = hg["ci95"]
+    assert lo <= hi and isinstance(hg["delta"], float)  # a valid interval
+    assert r1["ci"] == bench.run(cfg, gold, k=5)["ci"]  # deterministic (seeded)
+    assert "95% CI" in bench.format_report(r1)
+
+
+def test_bootstrap_ci_is_a_sane_interval():
+    lo, hi = bench._bootstrap_ci([0.5, 0.3, 0.4, 0.6, 0.2])
+    assert lo <= hi
+    assert bench._bootstrap_ci([]) == (0.0, 0.0)  # empty → degenerate, no crash
 
 
 def test_log_event_writes_valid_jsonl_when_enabled(tmp_path):

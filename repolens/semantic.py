@@ -45,8 +45,16 @@ _VEC_BACKEND: str | None = (
 )
 _ANNOUNCED = False
 _CACHE_LOGGED = False
-_MODEL_LOAD_FAILED = (
-    False  # set once if fastembed's model can't load → degrade to lexical
+_MODEL_LOAD_FAILED = False  # set once if fastembed's model can't load → degrade to lexical (this process)
+# A recent model-load failure is also persisted to a sentinel FILE in the cache dir, so the
+# degrade survives ACROSS processes (each `repolens find` is its own process) — otherwise a
+# black-holed network re-hangs every single call. Self-heals after the TTL.
+_MODEL_FAIL_TTL = 900  # seconds a load-failure sentinel suppresses retries (15 min)
+_HF_READ_TIMEOUT = (
+    15  # HuggingFace download read-timeout — a stalled connection fails fast
+)
+_MODEL_LOAD_TIMEOUT = (
+    120  # wall-clock ceiling on a load (env REPOLENS_MODEL_LOAD_TIMEOUT)
 )
 
 
@@ -76,8 +84,8 @@ def available(config: dict | None = None) -> bool:
     # they're used (_model, _normalize, knn), reached only when something truly embeds.
     import importlib.util
 
-    if _MODEL_LOAD_FAILED:
-        return False  # a prior model load failed this process → stay lexical
+    if _MODEL_LOAD_FAILED or _sentinel_recent():
+        return False  # a recent model-load failure (this process or another) → stay lexical
     if importlib.util.find_spec("numpy") is None:
         return False
     sm = _sem(config)
@@ -192,6 +200,72 @@ def _cache_dir() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+# _sentinel_path() / _sentinel_recent() / _write_sentinel()
+# ═══════════════════════════════════════════════════════════════
+# A load-failure marker file next to the model cache. Its MTIME is the
+# signal: within _MODEL_FAIL_TTL, every process treats the tier as down and
+# stays lexical without re-attempting the (possibly hanging) load; after the
+# TTL it's ignored, so a transient network black-hole self-heals.
+# ═══════════════════════════════════════════════════════════════
+def _sentinel_path() -> str:
+    return os.path.join(os.path.dirname(_cache_dir()), ".model-load-failed")
+
+
+def _sentinel_recent() -> bool:
+    import time
+
+    try:
+        return (time.time() - os.path.getmtime(_sentinel_path())) < _MODEL_FAIL_TTL
+    except OSError:
+        return False  # no sentinel → no recent failure
+
+
+def _write_sentinel() -> None:
+    try:
+        p = _sentinel_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w"):
+            pass  # touch — the mtime carries the timestamp
+    except OSError:
+        pass  # best-effort; the in-process flag still degrades this run
+
+
+# ═══════════════════════════════════════════════════════════════
+# _load_with_timeout()
+# ═══════════════════════════════════════════════════════════════
+# Load the model in a DAEMON thread bounded by a wall-clock timeout, so a
+# stalled download can neither hang `find` forever nor block process exit.
+# The env override lets a genuinely slow first download raise the ceiling.
+# ═══════════════════════════════════════════════════════════════
+def _load_with_timeout(name: str, threads, cache: str):
+    import threading
+
+    from fastembed import TextEmbedding
+
+    timeout = int(
+        os.environ.get("REPOLENS_MODEL_LOAD_TIMEOUT", str(_MODEL_LOAD_TIMEOUT))
+    )
+    box: dict = {}
+
+    def _load() -> None:
+        try:
+            box["model"] = TextEmbedding(
+                model_name=name, threads=threads, cache_dir=cache
+            )
+        except Exception as e:  # noqa: BLE001 — surfaced to the caller below
+            box["error"] = e
+
+    t = threading.Thread(target=_load, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError(f"model load exceeded {timeout}s (network stalled?)")
+    if "error" in box:
+        raise box["error"]
+    return box["model"]
+
+
+# ═══════════════════════════════════════════════════════════════
 # _model()
 # ═══════════════════════════════════════════════════════════════
 # Load (once, cached) the configured fastembed model. `threads` throttles
@@ -207,11 +281,15 @@ def _model(config: dict):
     name = config["semantic"]["model"]
     if name not in _MODELS:
         global _MODEL_LOAD_FAILED, _CACHE_LOGGED
-        if _MODEL_LOAD_FAILED:
-            raise EmbeddingError("fastembed model previously failed to load")
+        if _MODEL_LOAD_FAILED or _sentinel_recent():
+            raise EmbeddingError(
+                "fastembed model load recently failed — staying lexical"
+            )
+        # A stalled/black-holed HuggingFace connection would otherwise hang the download
+        # forever. The read-timeout fails a dead connection fast without aborting a slow-
+        # but-flowing one; _load_with_timeout is the wall-clock backstop for any other stall.
+        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(_HF_READ_TIMEOUT))
         try:
-            from fastembed import TextEmbedding
-
             try:  # best-effort: silence fastembed's loguru ERROR spam on a degrade
                 from loguru import logger
 
@@ -224,13 +302,13 @@ def _model(config: dict):
                 _CACHE_LOGGED = True
                 print(f"ℹ semantic: model cache at {cache}", file=sys.stderr)
             threads = int(config["semantic"].get("threads", 0)) or None
-            _MODELS[name] = TextEmbedding(
-                model_name=name, threads=threads, cache_dir=cache
-            )
-        except Exception as e:  # noqa: BLE001 — memoize the failure, degrade once
+            _MODELS[name] = _load_with_timeout(name, threads, cache)
+        except Exception as e:  # noqa: BLE001 — memoize + PERSIST the failure, degrade
             _MODEL_LOAD_FAILED = True
+            _write_sentinel()  # so sibling processes degrade instead of re-hanging
             print(
-                f"ℹ semantic: model failed to load ({e}) — lexical-only for this session",
+                f"ℹ semantic: model failed to load ({e}) — lexical-only "
+                f"(retries suppressed ~{_MODEL_FAIL_TTL // 60} min)",
                 file=sys.stderr,
             )
             raise EmbeddingError(f"fastembed model load failed: {e}") from e
