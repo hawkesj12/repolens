@@ -42,16 +42,18 @@ Rather than claim it helps, repolens ships a benchmark you run. `repolens bench`
 
 On this repo (bge-base, k=8):
 
-| arm                  | recall@8 | MRR  |
-| -------------------- | -------- | ---- |
-| grep (distinct-term) | 94%      | 0.52 |
-| lexical (BM25)       | 50%      | 0.34 |
-| hybrid               | 100%     | 0.67 |
+| arm                     | recall@8 | MRR  |
+| ----------------------- | -------- | ---- |
+| grep (distinct-term) \* | 94%      | 0.52 |
+| lexical (BM25)          | 50%      | 0.34 |
+| hybrid                  | 100%     | 0.67 |
 
 Two honest takeaways, with the uncertainty attached:
 
 - **Hybrid clearly beats BM25** — ΔMRR **+0.33, 95% CI [+0.17, +0.50]** (excludes zero). Lexical is what you fall back to _without_ the model, so this is the result that justifies shipping semantic on by default.
 - **Against a fair grep, hybrid wins on recall (100% vs 94%) but its MRR edge is within the noise** — ΔMRR **+0.16, 95% CI [−0.01, +0.33]** (crosses zero at n=18). Grep is a stronger literal baseline than most tools admit; hybrid's real advantage is recall and the meaning-based queries grep can't reach, not a ranking blowout.
+
+> **\* The benchmark is charitable to grep — and that _under_-credits repolens.** Real `grep`/`rg` **doesn't rank**: it returns matches in file order, unranked. The grep arm here is given a relevance ranking (by distinct query terms) that grep doesn't natively have, so the MRR comparison already flatters it. In actual use the gap is wider than the number shows: grep hands back an **unranked pile of matches that you — or your agent — must read and judge** (a real round-trip in time and tokens the benchmark charges grep nothing for), whereas repolens returns the files **already ranked, each with the matching passage**. That "ranked + passage vs sift-it-yourself" difference is a genuine repolens advantage the retrieval MRR doesn't measure — kept separate here on purpose, but real.
 
 Run `repolens bench` on your own repo — that's the number that matters, not this one.
 
