@@ -1,19 +1,19 @@
 # repolens
 
 [![CI](https://github.com/hawkesj12/repolens/actions/workflows/ci.yml/badge.svg)](https://github.com/hawkesj12/repolens/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/repolens.svg)](https://pypi.org/project/repolens/)
-[![Python](https://img.shields.io/pypi/pyversions/repolens.svg)](https://pypi.org/project/repolens/)
+[![PyPI](https://img.shields.io/pypi/v/repolens-search.svg)](https://pypi.org/project/repolens-search/)
+[![Python](https://img.shields.io/pypi/pyversions/repolens-search.svg)](https://pypi.org/project/repolens-search/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Ranked hybrid search + a typed hygiene linter for a repo's whole corpus.** One local index over your **docs, code purpose-lines, and database schema**, so you can ask _"where does X live?"_ in plain words and get the right few files back — ranked and described — instead of sifting a wall of `grep` hits.
 
-Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-code)) works alongside a growing pile of markdown and greps on demand rather than keeping a semantic index. **Hybrid search ships by default** — `pip install repolens` gives you ranked BM25 fused with semantic embeddings out of the box (`fastembed` + `sqlite-vec`, both CPU, no service, no keys). It degrades to lexical-only (BM25) if the model can't load, and `--lexical` forces BM25 on demand. The first run downloads a ~200MB model once (cached durably); everything else is offline.
+Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-code)) works alongside a growing pile of markdown and greps on demand rather than keeping a semantic index. **Hybrid search ships by default** — `pip install repolens-search` gives you ranked BM25 fused with semantic embeddings out of the box (`fastembed` + `sqlite-vec`, both CPU, no service, no keys). It degrades to lexical-only (BM25) if the model can't load, and `--lexical` forces BM25 on demand. The first run downloads a ~200MB model once (cached durably); everything else is offline.
 
 ## How it works
 
 **Install once, index per repo, then just search.** Three steps — and the last one stays current on its own forever.
 
-1. **Install once, globally.** `pipx install repolens` puts the `repolens` CLI on your PATH, hybrid search included. One time, ever.
+1. **Install once, globally.** `pipx install repolens-search` puts the `repolens` CLI on your PATH, hybrid search included. One time, ever. (The PyPI package is `repolens-search` — the name `repolens` was taken; the command you run is still `repolens`.)
 
 2. **`repolens init` once per repo.** Run it in each repo you want indexed. It creates two things:
    - **`.repolens.toml`** — the config: what to index, ranking + semantic settings. Auto-discovers any SQLite DBs and wires their schema in.
@@ -82,8 +82,8 @@ Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code sear
 ## Install
 
 ```sh
-pipx install repolens        # hybrid search included (fastembed + sqlite-vec, CPU, no service)
-# or: uv tool install repolens
+pipx install repolens-search   # PyPI package name; the command it installs is `repolens`
+# or: uv tool install repolens-search
 ```
 
 Requires Python 3.11+. repolens depends on `fastembed` (ONNX embeddings, no PyTorch/CUDA/service), `sqlite-vec`, and `numpy` — all CPU-only, no service. (`fastembed` pulls `onnxruntime`, a prebuilt binary; on the rare platform where that won't install, repolens still runs lexical-only.)
