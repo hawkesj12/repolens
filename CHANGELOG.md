@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`repolens index --threads N`** — override `[semantic].threads` (the fastembed CPU-core
+  cap) for one build; `--threads 0` uses all cores for a fast one-off rebuild.
+- **Back-compat read of a pre-0.11 `.repometa.toml`.** When `.repolens.toml` is absent,
+  repolens reads a legacy `.repometa.toml` with a one-time deprecation warning, so an
+  un-migrated repo keeps its config instead of silently falling back to defaults.
 - **Private, opt-in event logging (`[log].enabled`).** When on, repolens appends one
   JSON line per `find` (query, mode, hits + scores, timing) and per embed (file, chunk
   count, model, timing) to `.repolens/events.jsonl` — inside the gitignored cache dir,
@@ -26,7 +31,7 @@ All notable changes to this project are documented here. The format follows
   recall@k + MRR in THREE modes against the same corpus — a literal **grep** baseline,
   **lexical** (BM25), and **hybrid** (BM25 + semantic), so the table reads as the
   progression grep → BM25 → hybrid. Measured on this repo's own corpus (bge-base, k=8):
-  overall recall@8 grep 72% / lexical 50% / hybrid 100%; MRR 0.39 / 0.38 / 0.67. Grep
+  overall recall@8 grep 78% / lexical 50% / hybrid 100%; MRR 0.39 / 0.34 / 0.67. Grep
   beats the lexical arm (it reads full file bodies, which the code index reduces to a
   purpose-line + docstring), but hybrid beats grep decisively.
 - **Code docstrings are indexed and embedded.** A code file used to be searchable by
@@ -49,6 +54,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Enabling semantic on a lexically-built index now backfills embeddings.** An index
+  built lexical-first (or after a model/dims change) silently kept running lexical while
+  reporting hybrid, because incremental indexing only touches _changed_ files. An
+  embedding signature (`model:dims`) is now stored in `meta`; on a mismatch (including an
+  index with no vectors, or one whose embeds silently failed), `build_incremental` forces
+  a full backfill so hybrid actually runs.
+- **A model-load failure degrades once instead of a per-doc retry storm.** `_model()` only
+  cached on success, so an offline/cold-cache box re-attempted the load for _every_ doc —
+  an effective hang. The failure is now memoized (`available()` flips to lexical), announced
+  once, and fastembed's loguru noise is quieted so a graceful degrade doesn't read as a crash.
+- **A no-op incremental refresh no longer takes the write lock.** It used to `BEGIN
+IMMEDIATE` + commit even when nothing changed, serializing concurrent `find`-refreshers;
+  it now detects "nothing changed" under a read connection and returns without a write.
 - **repolens no longer indexes its own `.repolens.toml`.** The config file is tooling,
   not corpus, but it was being indexed and showed up as noise in results (the very first
   `find` a new user runs). Added `CONFIG_NAME` to the default `skip_files`.
@@ -64,6 +82,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Benchmark framing softened + Ollama recommended for heavy use.** The README no longer
+  leads with "100% recall@8" (which flatters a 22-file corpus); it leads with MRR + the
+  k-stable margin and frames the gold set as a directional signal, not a claim. Added
+  guidance: for query-heavy agent use, point `[semantic].provider = "http"` at a resident
+  Ollama so the model isn't reloaded per `find` (most of a hybrid query's latency).
+- **mypy is now part of CI** (the repo's own type gate; previously ruff + pytest only).
 - **Semantic search is now a default dependency — `pip install repolens` gives hybrid
   out of the box.** `fastembed` + `sqlite-vec` + `numpy` moved from the opt-in
   `[semantic]` extra into the core dependencies, because a new user who missed the extra

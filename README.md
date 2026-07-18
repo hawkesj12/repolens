@@ -36,17 +36,13 @@ Zero-LLM structural checks (dead links, empty files, malformed frontmatter, dupl
 **`repolens bench` — prove hybrid earns its dependency.**
 Scores hybrid vs lexical `find` on a committed gold set (`benchmarks/acceptance.jsonl`) and prints recall@k + MRR per query class, so the "semantic helps" claim is something you _run_, not something you trust. See below.
 
-## Does it help? (measured — run `repolens bench` yourself)
+## Does it help? (don't trust me — run `repolens bench`)
 
-`repolens bench` runs every query **three ways against the same corpus** — a literal **grep** baseline, **lexical** `find` (BM25), and **hybrid** `find` (BM25 + semantic) — and prints recall@k + MRR per class, so you can see the progression grep → BM25 → hybrid rather than trust a claim. It ships a committed gold set (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs across exact-term, conceptual, and paraphrase classes). On this repo's own corpus (bge-base, k=8):
+Rather than claim it helps, repolens ships a benchmark you run. `repolens bench` scores every query **three ways against the same corpus** — a literal **grep** baseline, **lexical** `find` (BM25), and **hybrid** `find` (BM25 + semantic) — reporting recall@k + MRR per class, so you see the progression grep → BM25 → hybrid. The gold set is small and self-authored (`benchmarks/acceptance.jsonl`: 18 query→gold-doc pairs on this repo's own files), so treat it as a **directional signal on one corpus, not a general claim.**
 
-| arm                          | overall recall@8 | overall MRR |
-| ---------------------------- | ---------------- | ----------- |
-| grep (literal)               | 72%              | 0.39        |
-| lexical (BM25)               | 50%              | 0.38        |
-| **hybrid (BM25 + semantic)** | **100%**         | **0.67**    |
+On this repo (bge-base, k=8), hybrid ranks the gold document higher than either baseline — overall **MRR ≈ 0.67 hybrid vs 0.39 grep vs 0.34 lexical.** MRR is the number to watch, not recall@8: the margin holds as you tighten k (hybrid leads at k=1, 3, 5, 8), whereas a raw "recall@8" flatters a 22-file corpus where the top 8 is already a third of everything. Grep is a tougher baseline than you'd expect — it reads full file bodies, so it beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source) — but hybrid still wins, because the embeddings recover the conceptual and paraphrase queries neither literal tool reaches.
 
-Grep is a stronger baseline than you'd expect — it reads full file bodies, so it actually beats repolens's own lexical arm (which indexes code by purpose-line + docstring, not full source). **Hybrid still beats grep decisively** — 100% vs 72% recall, 0.67 vs 0.39 MRR — because the embeddings recover the conceptual and paraphrase queries neither literal tool can reach. **Honestly, though:** that's one small corpus and 18 queries — a real, reproducible signal, not a statistically significant study. Run `repolens bench` on your own repo and see.
+Run `repolens bench` on your own repo to see whether the semantic tier earns its keep there — that's the number that matters, not this one.
 
 ## Who it's for
 
@@ -74,7 +70,9 @@ pipx install repolens        # hybrid search included (fastembed + sqlite-vec, C
 
 Requires Python 3.11+. repolens depends on `fastembed` (ONNX embeddings, no PyTorch/CUDA/service), `sqlite-vec`, and `numpy` — all CPU-only, no service. (`fastembed` pulls `onnxruntime`, a prebuilt binary; on the rare platform where that won't install, repolens still runs lexical-only.)
 
-> **First run has a one-time cost.** The first index build **embeds your whole corpus** — fastembed downloads the model (`BAAI/bge-base-en-v1.5`, ~0.2 GB) once (cached under `~/.cache/repolens`, override with `REPOLENS_CACHE_DIR`), then embeds every doc's chunks on CPU. Budget **roughly a few seconds per document** (a few hundred large markdown files can take several minutes). It's throttled by default (`[semantic].threads = 2`) so it won't max your machine — raise it for speed on an idle box, or offload embedding entirely to a local GPU via the bring-your-own-embedder option below. After that it's incremental — only _changed_ files re-embed, so day-to-day use is instant. Prefer no model? Set `[semantic].enabled = false` for lexical-only (BM25). On a build without loadable-extension support (`sqlite3` is compiled without it on some platforms — notably stock macOS), repolens automatically falls back from `sqlite-vec` to a numpy brute-force vector search; it announces which path is active.
+> **First run has a one-time cost.** The first index build **embeds your whole corpus** — fastembed downloads the model (`BAAI/bge-base-en-v1.5`, ~0.2 GB) once (cached under `~/.cache/repolens`, override with `REPOLENS_CACHE_DIR`), then embeds every doc's chunks on CPU. Budget **roughly a few seconds per document** (a few hundred large markdown files can take several minutes). It's throttled by default (`[semantic].threads = 2`) so it won't max your machine — raise it (`repolens index --threads 0` for all cores, or set `[semantic].threads`) for a faster one-off rebuild. After that it's incremental — only _changed_ files re-embed, so day-to-day use is instant. Prefer no model? Set `[semantic].enabled = false` for lexical-only (BM25). On a build without loadable-extension support (`sqlite3` is compiled without it on some platforms — notably stock macOS), repolens automatically falls back from `sqlite-vec` to a numpy brute-force vector search; it announces which path is active.
+
+> **Heavy use? Point it at Ollama.** With the default local fastembed, each `repolens find` runs as its own process and **reloads the model every time** — that model load is most of a hybrid query's latency. For an agent firing many queries, keep the model **resident**: set `[semantic].provider = "http"` and `endpoint` to a local [Ollama](https://ollama.com) (or any OpenAI-compatible `/v1/embeddings`) — it holds the model in memory across calls, so each `find` is just the embed + search. (Ollama's own core cap is server-side via `OLLAMA_NUM_THREAD`, not `[semantic].threads`.) fastembed stays the zero-config default; this is the upgrade for query-heavy workloads.
 
 ## Quick start
 

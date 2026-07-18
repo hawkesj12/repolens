@@ -49,10 +49,14 @@ DEFAULT_CONFIG = """\
 # dims = 768
 # chunk_tokens = 512                # per-chunk target; a chunk never crosses a heading
 # overlap = 0.15
-# threads = 2                       # cap fastembed CPU threads (0 = all cores)
+# threads = 2                       # CORE CAP: fastembed CPU threads (0 = all cores).
+#                                   # Also overridable per build: `repolens index --threads N`.
 #
-# Bring your own embedder instead of local fastembed — any OpenAI-compatible
-# /v1/embeddings endpoint (local Ollama/LM Studio, or a metered API):
+# HEAVY USE? fastembed reloads the model per `repolens find` process (most of a hybrid
+# query's latency). Point provider = "http" at a RESIDENT embedder (Ollama keeps the model
+# loaded across calls) for a big speedup. Any OpenAI-compatible /v1/embeddings endpoint
+# works (local Ollama/LM Studio, or a metered API). Ollama's own core cap is server-side
+# (OLLAMA_NUM_THREAD), not [semantic].threads.
 # provider = "http"
 # endpoint = "http://localhost:11434/v1/embeddings"
 # model = "nomic-embed-text"        # the model your endpoint serves
