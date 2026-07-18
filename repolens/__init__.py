@@ -4,12 +4,12 @@ Finds where things live across a repo's markdown (full text), code (by purpose
 line), and optional DB tables — including gitignored content that .gitignore-
 respecting tools skip — and lints a typed knowledge corpus for hygiene. Built for
 repos where an agent (e.g. Claude Code) greps on demand rather than keeping a
-semantic index. Stdlib-only.
+semantic index. Hybrid search ships by default (core deps: fastembed + sqlite-vec).
 """
 
 from __future__ import annotations
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 # Bumped when the config or type-schema shape changes.
 # 1.3: added the [semantic] config block (hybrid search) + the chunks/vectors tables.

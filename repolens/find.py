@@ -156,8 +156,8 @@ def _note_lexical_only() -> None:
         return
     _lexical_note_shown = True
     print(
-        "ℹ semantic tier enabled but not installed — lexical-only find "
-        "(pip install 'repolens[semantic]' for hybrid search)",
+        "ℹ semantic deps unavailable — lexical-only find "
+        "(hybrid ships by default; reinstall repolens, or set [semantic].enabled=false)",
         file=sys.stderr,
     )
 

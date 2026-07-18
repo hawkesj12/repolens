@@ -1,7 +1,7 @@
 """repolens.templates — embedded starter files written by `repolens init`.
 
-Embedded as strings (not package data) so the wheel stays trivially portable —
-stdlib-only, nothing to bundle.
+Embedded as strings (not package data) so there's nothing to bundle — the starter
+files travel with the module.
 """
 
 from __future__ import annotations
@@ -36,8 +36,9 @@ DEFAULT_CONFIG = """\
 # [integrations.sqlite]
 # paths = ["data/app.db", "data/other.db"]   # one or many (legacy `path = "..."` also works)
 
-# Semantic (hybrid) search. ON by default when the `[semantic]` extra is installed
-# (pip install 'repolens[semantic]'); inert otherwise (find stays lexical-only).
+# Semantic (hybrid) search — ON by default (fastembed + sqlite-vec ship with repolens).
+# Set `enabled = false` for lexical-only (BM25). The first run downloads a ~200MB model
+# once, cached under ~/.cache/repolens (override with REPOLENS_CACHE_DIR).
 # Chunks are section-bounded and small (~512 tokens) — they never cross a Markdown
 # heading. `threads` throttles fastembed's CPU (low = gentle on the machine). Vectors
 # store in the same index (sqlite-vec fast path, numpy blob fallback). Nothing to

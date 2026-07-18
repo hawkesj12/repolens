@@ -52,6 +52,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Semantic search is now a default dependency — `pip install repolens` gives hybrid
+  out of the box.** `fastembed` + `sqlite-vec` + `numpy` moved from the opt-in
+  `[semantic]` extra into the core dependencies, because a new user who missed the extra
+  silently got the weaker lexical-only experience. Lexical (BM25) remains — as the
+  degrade-fallback when the model can't load and as the benchmark's control — and
+  `[semantic].enabled = false` still opts out of the model. The `[semantic]` extra is
+  kept as an empty alias so existing install commands still resolve. The core is no
+  longer stdlib-only; first run downloads a ~200MB model once (cached under
+  `~/.cache/repolens`).
 - **Renamed the on-disk footprint `.repometa` → `.repolens`.** The config file is now
   `.repolens.toml` and the disposable index cache is `.repolens/` (was `.repometa.toml`
   / `.repometa/`) — one consistent name matching the tool. The cache is gitignored and

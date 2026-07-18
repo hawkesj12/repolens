@@ -2,13 +2,13 @@
 
 **Ranked hybrid search + a typed hygiene linter for a repo's whole corpus.** One local index over your **docs, code purpose-lines, and database schema**, so you can ask _"where does X live?"_ in plain words and get the right few files back — ranked and described — instead of sifting a wall of `grep` hits.
 
-Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-code)) works alongside a growing pile of markdown and greps on demand rather than keeping a semantic index. **The core is stdlib-only** — no dependencies, no services, no keys. Semantic search is one opt-in extra (`pip install 'repolens[semantic]'` → `fastembed` + `sqlite-vec`, both CPU, no service); without it, `find` is lexical-only (BM25) and everything else is unchanged.
+Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-code)) works alongside a growing pile of markdown and greps on demand rather than keeping a semantic index. **Hybrid search ships by default** — `pip install repolens` gives you ranked BM25 fused with semantic embeddings out of the box (`fastembed` + `sqlite-vec`, both CPU, no service, no keys). It degrades to lexical-only (BM25) if the model can't load, and `--lexical` forces BM25 on demand. The first run downloads a ~200MB model once (cached durably); everything else is offline.
 
 ## How it works
 
 **Install once, index per repo, then just search.** Three steps — and the last one stays current on its own forever.
 
-1. **Install once, globally.** `pipx install repolens` puts the `repolens` CLI on your PATH. One time, ever. (Semantic search is an opt-in extra: `pipx install 'repolens[semantic]'`.)
+1. **Install once, globally.** `pipx install repolens` puts the `repolens` CLI on your PATH, hybrid search included. One time, ever.
 
 2. **`repolens init` once per repo.** Run it in each repo you want indexed. It creates two things:
    - **`.repolens.toml`** — the config: what to index, ranking + semantic settings. Auto-discovers any SQLite DBs and wires their schema in.
@@ -21,7 +21,7 @@ That's the whole model: **`pipx install` once → `repolens init` per repo → `
 ## What it does
 
 **`repolens find "…"` — where does X live?**
-Builds a local SQLite index and answers ranked queries with a one-line description **and the passage that matched** per hit — so you get the relevant text, not just a file path. Ranking is **hybrid**: BM25 (FTS5) for exact-term/identifier precision, fused with dense semantic similarity for paraphrase/meaning recall, combined by Reciprocal Rank Fusion (RRF). With the `[semantic]` extra absent it's BM25-only (and says so once); `--lexical` forces BM25-only on demand.
+Builds a local SQLite index and answers ranked queries with a one-line description **and the passage that matched** per hit — so you get the relevant text, not just a file path. Ranking is **hybrid**: BM25 (FTS5) for exact-term/identifier precision, fused with dense semantic similarity for paraphrase/meaning recall, combined by Reciprocal Rank Fusion (RRF). If the embedding model can't load it degrades to BM25-only (and says so once); `--lexical` forces BM25-only on demand.
 
 - **Markdown** — full text.
 - **Code / config** — indexed by each file's _purpose line_ (from its docstring or leading comment), so `repolens find "garmin ingest"` returns `scripts/ingest_garmin.py — "Pulls Garmin biometrics into the DB"`, not a wall of matches. The full module docstring is indexed too (BM25 + embedded), so a conceptual query finds the file even when your words aren't in its one-line purpose.
@@ -60,14 +60,13 @@ Not a replacement for `ripgrep` (use `rg` for exhaustive literal/regex code sear
 ## Install
 
 ```sh
-pipx install repolens                 # core — stdlib-only, lexical (BM25) find
-pipx install 'repolens[semantic]'     # + hybrid semantic search (fastembed + sqlite-vec, CPU, no service)
-# or: uv tool install repolens[semantic]
+pipx install repolens        # hybrid search included (fastembed + sqlite-vec, CPU, no service)
+# or: uv tool install repolens
 ```
 
-Requires Python 3.11+. The `[semantic]` extra adds `fastembed` (ONNX embeddings, no PyTorch/CUDA/service) and `sqlite-vec`; both run on CPU.
+Requires Python 3.11+. repolens depends on `fastembed` (ONNX embeddings, no PyTorch/CUDA/service), `sqlite-vec`, and `numpy` — all CPU-only, no service. (`fastembed` pulls `onnxruntime`, a prebuilt binary; on the rare platform where that won't install, repolens still runs lexical-only.)
 
-> **First hybrid build is a one-time cost.** With the extra installed, the first index build **embeds your whole corpus** — fastembed downloads the model (`BAAI/bge-base-en-v1.5`, ~0.2 GB) once, then embeds every doc's chunks on CPU. Budget **roughly a few seconds per document** (a few hundred large markdown files can take several minutes); `init` prints progress so it isn't a silent hang. It's throttled by default (`[semantic].threads = 2`) so it won't max your machine — raise it for speed on an idle box, or offload embedding entirely to a local GPU via the bring-your-own-embedder option below. After that it's incremental — only _changed_ files re-embed, so day-to-day use is instant. If you'd rather not pay it up front, skip the extra (lexical-only, no downloads) and add it later. On a build without loadable-extension support (`sqlite3` is compiled without it on some platforms — notably stock macOS), repolens automatically falls back from `sqlite-vec` to a numpy brute-force vector search; it announces which path is active.
+> **First run has a one-time cost.** The first index build **embeds your whole corpus** — fastembed downloads the model (`BAAI/bge-base-en-v1.5`, ~0.2 GB) once (cached under `~/.cache/repolens`, override with `REPOLENS_CACHE_DIR`), then embeds every doc's chunks on CPU. Budget **roughly a few seconds per document** (a few hundred large markdown files can take several minutes). It's throttled by default (`[semantic].threads = 2`) so it won't max your machine — raise it for speed on an idle box, or offload embedding entirely to a local GPU via the bring-your-own-embedder option below. After that it's incremental — only _changed_ files re-embed, so day-to-day use is instant. Prefer no model? Set `[semantic].enabled = false` for lexical-only (BM25). On a build without loadable-extension support (`sqlite3` is compiled without it on some platforms — notably stock macOS), repolens automatically falls back from `sqlite-vec` to a numpy brute-force vector search; it announces which path is active.
 
 ## Quick start
 
@@ -92,7 +91,7 @@ recursive = true               # classify subfolders too
 exclude = ["*draft*"]          # artifacts, not records
 require = ["^\\*\\*Date:\\*\\*"]  # regex a conforming doc must contain (a warn if missing)
 
-# Semantic (hybrid) search — ON by default when the [semantic] extra is installed.
+# Semantic (hybrid) search — ON by default. Set enabled = false for lexical-only.
 # [semantic]
 # model = "BAAI/bge-base-en-v1.5"   # short-passage retriever; fits the ~512 section-bounded chunks
 # enabled = true
@@ -123,7 +122,7 @@ A ready-to-drop version is in [`docs/agent-rule-template.md`](docs/agent-rule-te
 
 ## How the index stays correct
 
-The index (`.repolens/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. WAL is what lets many agent sessions read (and the odd one refresh) the same index concurrently without locking each other out. With the `[semantic]` extra installed, the same content-hash drives embeddings — a changed file is re-chunked (**section-bounded**: chunks split on Markdown headings and never cross one, ~512 tokens each) and re-embedded, its vectors stored via `sqlite-vec` (or the numpy fallback); `find` fuses the BM25 and dense results with RRF, rolling per-chunk hits up to their parent document. A deleted file's chunks/vectors cascade away. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
+The index (`.repolens/index.db`, gitignored) is a **cache derived from your files** — never the source of truth. It updates **incrementally**: a `files(relpath,size,mtime,hash)` table stat-gates each file and re-indexes only those whose content hash changed (so a `touch` or a fresh clone re-hashes but doesn't re-index), reconciling deletes, all in one WAL transaction. WAL is what lets many agent sessions read (and the odd one refresh) the same index concurrently without locking each other out. The same content-hash drives embeddings (hybrid is on by default) — a changed file is re-chunked (**section-bounded**: chunks split on Markdown headings and never cross one, ~512 tokens each) and re-embedded, its vectors stored via `sqlite-vec` (or the numpy fallback); `find` fuses the BM25 and dense results with RRF, rolling per-chunk hits up to their parent document. A deleted file's chunks/vectors cascade away. `repolens index --rebuild` is the always-correct full backstop (and what CI runs); the index can't go stale, and anything uncertain just rebuilds.
 
 ## Roadmap
 

@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repolens"
-version = "0.10.0"
-description = "Ranked, described search over a repo's docs + code + data (including gitignored content), plus a typed corpus linter. Built for repos worked by a grep-on-demand agent."
+version = "0.11.0"
+description = "Ranked, described hybrid (BM25 + semantic) search over a repo's docs + code + data (including gitignored content), plus a typed corpus linter. Built for repos worked by a grep-on-demand agent."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Justin Hawkes" }]
 keywords = ["repository", "search", "index", "lint", "findability", "claude-code", "agent", "fts5"]
-dependencies = []
+dependencies = ["fastembed>=0.3", "sqlite-vec>=0.1", "numpy>=1.24"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -24,12 +24,15 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
-# The core is stdlib-only. Semantic (hybrid) search is an OPT-IN extra: pip install
-# 'repolens[semantic]'. fastembed = ONNX embeddings on CPU (no service, no Ollama);
-# sqlite-vec = the fast vec0 KNN path (repolens falls back to numpy brute-force cosine
-# when a python sqlite3 build can't load the extension); numpy backs that fallback.
+# Hybrid (BM25 + semantic) search ships by default — the deps above are core:
+# fastembed = ONNX embeddings on CPU (no service, no Ollama); sqlite-vec = the fast vec0
+# KNN path (repolens falls back to numpy brute-force cosine when a python sqlite3 build
+# can't load the extension); numpy backs that fallback. To skip a local model entirely,
+# point [semantic].provider = "http" at any OpenAI-compatible /v1/embeddings endpoint.
+# `semantic` is kept as an empty extra so an existing `pip install 'repolens[semantic]'`
+# still resolves (now a no-op — the deps are already in the core install).
 [project.optional-dependencies]
-semantic = ["fastembed>=0.3", "sqlite-vec>=0.1", "numpy>=1.24"]
+semantic = []
 
 [project.scripts]
 repolens = "repolens.cli:main"
@@ -45,7 +48,7 @@ packages = ["repolens"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
-# Optional semantic deps have no type stubs — they're lazy-imported and gated by
+# The semantic deps have no type stubs — they're lazy-imported and gated by
 # semantic.available(), so a missing stub is expected, not a type error.
 [[tool.mypy.overrides]]
 module = ["fastembed", "sqlite_vec"]
