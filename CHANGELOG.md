@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-19
+
 ### Added
 
 - **Configurable per-model embedding prefixes (`[semantic].query_prefix` / `doc_prefix`).**
