@@ -23,6 +23,8 @@ Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-cod
 
 That's the whole model: **`pipx install` once → `repolens init` per repo → `repolens find`.**
 
+> **Want the internals?** [`docs/how-it-works.md`](docs/how-it-works.md) is a detailed prose walk-through — the three-kinds-of-content corpus model, section-bounded chunking, the BM25 + semantic + RRF fusion, content-hash incremental indexing, and the design principle behind each choice.
+
 ## What it does
 
 **`repolens find "…"` — where does X live?**
