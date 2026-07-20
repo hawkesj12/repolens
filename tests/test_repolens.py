@@ -395,6 +395,31 @@ def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
 
 
+def test_cmd_init_writes_claude_rule(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    cli.main(["init", "--no-db"])
+    rule = tmp_path / ".claude" / "rules" / "repolens.md"
+    assert rule.exists()
+    body = rule.read_text()
+    assert f"# RepoLens — {tmp_path.name}" in body  # repo name filled in
+    assert "repolens find" in body  # the actual routing instruction
+
+
+def test_cmd_init_no_claude_skips_rule(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    cli.main(["init", "--no-db", "--no-claude"])
+    assert not (tmp_path / ".claude" / "rules" / "repolens.md").exists()
+
+
+def test_cmd_init_preserves_existing_claude_rule(tmp_path, monkeypatch):
+    monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
+    rule = tmp_path / ".claude" / "rules" / "repolens.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("HAND-CURATED — do not clobber\n")
+    cli.main(["init", "--no-db"])  # no --force → leave the curated file alone
+    assert rule.read_text() == "HAND-CURATED — do not clobber\n"
+
+
 # ── hook (NON-DESTRUCTIVE) ─────────────────────────────────────
 
 

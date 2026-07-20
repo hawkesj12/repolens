@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `repo-lens`). The command, the import package, and the repo all stay `repolens`; only
 # the `pip install` name differs. See README install note.
 name = "repolens-search"
-version = "0.12.0"
+version = "0.13.0"
 description = "Ranked, described hybrid (BM25 + semantic) search over a repo's docs + code + data (including gitignored content), plus a typed corpus linter. Built for repos worked by a grep-on-demand agent."
 readme = "README.md"
 requires-python = ">=3.11"

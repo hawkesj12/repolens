@@ -88,6 +88,39 @@ def active_sqlite_block(paths: list[str]) -> str:
     )
 
 
+# ═══════════════════════════════════════════════════════════════
+# claude_rule()
+# ═══════════════════════════════════════════════════════════════
+# The Claude Code routing rule `repolens init` drops into
+# .claude/rules/repolens.md so an agent working in THIS repo prefers
+# `repolens find` (ranked, passage-returning) over a blind grep. The
+# rule auto-loads only in this repo's sessions — repos without repolens
+# never get it, so they keep grepping normally. Provider-agnostic on
+# purpose: a fresh init ships hybrid search via fastembed, so the copy
+# never assumes a particular embedder. Repo name is filled in per repo.
+# ═══════════════════════════════════════════════════════════════
+def claude_rule(repo_name: str) -> str:
+    return f"""\
+# RepoLens — {repo_name}
+
+This repo is indexed by **repolens** — one ranked, self-refreshing hybrid index over its
+docs, code purpose-lines, and DB schema. Every search re-indexes changed files first, so
+results are never stale, and each hit comes back with the **passage that matched**, not
+just a file path.
+
+## The rule
+
+**Default to `repolens find "<what you're after>"`** to locate anything here — which file
+handles X, where a concept lives, what covers a topic. It ranks the best few files and
+shows the matching text.
+
+**Use `rg` / grep only for** an exact string you need _every_ match of, or a regex.
+
+That's it: concept or "where is X" → `repolens find`; exact known string / every
+occurrence → `rg`.
+"""
+
+
 PRECOMMIT_HOOK = """\
 #!/bin/sh
 # repolens pre-commit — block a commit when the corpus lint finds ERRORS.

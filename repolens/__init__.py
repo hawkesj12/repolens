@@ -9,7 +9,7 @@ semantic index. Hybrid search ships by default (core deps: fastembed + sqlite-ve
 
 from __future__ import annotations
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 # Bumped when the config or type-schema shape changes.
 # 1.3: added the [semantic] config block (hybrid search) + the chunks/vectors tables.

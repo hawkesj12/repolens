@@ -15,9 +15,10 @@ Built for repos where an agent (e.g. [Claude Code](https://claude.com/claude-cod
 
 1. **Install once, globally.** `pipx install repolens-search` puts the `repolens` CLI on your PATH, hybrid search included. One time, ever. (The PyPI package is `repolens-search` — the name `repolens` was taken; the command you run is still `repolens`.)
 
-2. **`repolens init` once per repo.** Run it in each repo you want indexed. It creates two things:
+2. **`repolens init` once per repo.** Run it in each repo you want indexed. It creates:
    - **`.repolens.toml`** — the config: what to index, ranking + semantic settings. Auto-discovers any SQLite DBs and wires their schema in.
    - **`.repolens/index.db`** — the search index itself, a **disposable, gitignored cache** that self-refreshes and can't drift. Delete it and it rebuilds; it's never committed.
+   - **`.claude/rules/repolens.md`** — a small Claude Code routing rule so an AI agent working in the repo prefers `repolens find` over a blind grep. It lands only in repos you've `init`'d, so repos without repolens keep grepping normally. `--no-claude` skips it.
 
 3. **`repolens find "…"` — self-refreshing.** Every search re-indexes any changed files first, then searches, so results are never stale. You never manually rebuild.
 
@@ -125,8 +126,9 @@ Requires Python 3.11+. repolens depends on `fastembed` (ONNX embeddings, no PyTo
 
 ```sh
 cd your-repo
-repolens init                 # writes .repolens.toml + .gitignore + a warm index + the pre-commit lint hook,
-                              # and auto-discovers your DBs. --no-db opts out of discovery.
+repolens init                 # writes .repolens.toml + .gitignore + a warm index + the pre-commit lint hook
+                              # + a .claude/rules/repolens.md agent routing rule, and auto-discovers your DBs.
+                              # --no-db opts out of discovery; --no-claude opts out of the agent rule.
 repolens index                # rebuild/update the index (incremental; a disposable cache)
 repolens find "where's the deploy config"
 repolens bench                # score hybrid vs lexical on the committed gold set (recall@k + MRR)

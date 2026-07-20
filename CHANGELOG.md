@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-20
+
+### Added
+
+- **`repolens init` now scaffolds a Claude Code agent routing rule** at
+  `.claude/rules/repolens.md` — a small, provider-agnostic rule telling an AI agent
+  working in the repo to prefer `repolens find` (ranked, passage-returning) over a blind
+  grep, and to fall back to `rg` only for exact-string / regex needs. It lands **only in
+  repos you've `init`'d**, so repos without repolens keep grepping normally — no global
+  assumption. Parallels the existing pre-commit-hook and DB auto-wiring: init sets up the
+  index _and_ teaches the agent to use it. `--no-claude` opts out; an existing file is
+  preserved unless `--force`. New `templates.claude_rule()` + tests.
+
 ## [0.12.0] - 2026-07-19
 
 ### Added

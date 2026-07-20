@@ -83,6 +83,19 @@ def cmd_init(args) -> int:
     else:
         print("(no .git found — skipped pre-commit hook)")
 
+    # Drop the Claude Code routing rule so an agent working in this repo prefers
+    # `repolens find` over a blind grep. Parallels the pre-commit hook / DB wiring:
+    # init sets up the index AND teaches the agent to use it. Lands only here, so
+    # repos without repolens keep grepping normally. --no-claude opts out.
+    if not args.no_claude:
+        rule = r / ".claude" / "rules" / "repolens.md"
+        if rule.exists() and not args.force:
+            print(".claude/rules/repolens.md exists (use --force to overwrite)")
+        else:
+            rule.parent.mkdir(parents=True, exist_ok=True)
+            rule.write_text(templates.claude_rule(r.name), encoding="utf-8")
+            print(f"wrote {rule.relative_to(r)} (agent routing rule)")
+
     print('repolens initialized. Run `repolens index` then `repolens find "..."`.')
     return 0
 
@@ -232,11 +245,16 @@ def main(argv=None) -> int:
 
     p_init = sub.add_parser(
         "init",
-        help="scaffold .repolens.toml + gitignore + warm index + pre-commit lint hook",
+        help="scaffold .repolens.toml + gitignore + warm index + pre-commit hook + agent rule",
     )
     p_init.add_argument("--force", action="store_true", help="overwrite existing files")
     p_init.add_argument(
         "--no-db", action="store_true", help="skip SQLite auto-discovery"
+    )
+    p_init.add_argument(
+        "--no-claude",
+        action="store_true",
+        help="skip the .claude/rules/repolens.md agent routing rule",
     )
     p_init.set_defaults(func=cmd_init)
 
