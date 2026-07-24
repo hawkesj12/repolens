@@ -1553,3 +1553,33 @@ def test_lint_findings_use_posix_relpaths(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"docs/empty.md": "   \n"})
     findings = lint.lint(tmp_path, cfg)
     assert findings and all("\\" not in f["path"] for f in findings)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Console encoding
+# ═══════════════════════════════════════════════════════════════
+# Windows defaults stdout to the system code page (usually cp1252), which has
+# no byte for the box-drawing '│' and arrow glyphs the CLI prints. Unlike
+# READING cp1252 (which maps all 256 bytes and mojibakes silently), WRITING an
+# unmappable character raises — `repolens find` died with UnicodeEncodeError
+# instead of showing results. main() now reconfigures stdio to UTF-8.
+# ═══════════════════════════════════════════════════════════════
+def test_cli_survives_a_legacy_codepage_console(tmp_path):
+    (tmp_path / "a.md").write_text(
+        "# Widget Guide\n\nHow to configure the widget.\n", encoding="utf-8"
+    )
+    code = (
+        "import sys;sys.argv=['repolens','find','configure the widget'];"
+        "from repolens import cli;cli.main()"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252", "REPOLENS_MODEL_LOAD_TIMEOUT": "1"},
+    )
+    assert "UnicodeEncodeError" not in out.stderr, (
+        "CLI crashed writing non-ASCII to a cp1252 console:\n" + out.stderr[-600:]
+    )

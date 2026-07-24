@@ -23,6 +23,12 @@ ValueError)` when writing the optional event log, `(ImportError, AttributeError)
   returned nothing), `repolens init` wrote `paths = ["data\app.db"]` into TOML where
   `\a` is an escape sequence, and — worst — every file compared unequal to the
   gitignore allowlist, so **indexing inside a git repo produced an empty index.**
+- **Windows: `repolens find` no longer crashes on the console.** Output goes through
+  the system code page there (usually cp1252), which has no byte for the box-drawing
+  `│` used to show the matching passage — so `find` died with a `UnicodeEncodeError`
+  instead of printing results. The CLI now sets stdout/stderr to UTF-8. Note the
+  asymmetry: *reading* cp1252 never raises (it maps all 256 bytes and mojibakes
+  silently), but *writing* an unmappable character does.
 - **Windows: text I/O is explicitly UTF-8.** Python defaults text reads to the system
   locale there (usually cp1252), which maps all 256 bytes and so never raises — it
   silently mojibakes. Indexing a document containing an em-dash or curly quotes stored

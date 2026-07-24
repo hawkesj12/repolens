@@ -236,7 +236,28 @@ def cmd_lint(args) -> int:
 # ═══════════════════════════════════════════════════════════════
 # main()
 # ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# _utf8_stdio()
+# ═══════════════════════════════════════════════════════════════
+# Make console output UTF-8 safe. Windows defaults stdout to the system
+# code page (usually cp1252), which has no byte for the box-drawing and
+# arrow glyphs this CLI prints — so `repolens find` died with a
+# UnicodeEncodeError on '│' instead of showing results. Note the asymmetry:
+# reading cp1252 never raises (it maps all 256 bytes, silently mojibaking),
+# but WRITING an unmappable character does.
+# errors="replace" is the belt-and-braces half: on a console that truly
+# cannot render a glyph we print '?' rather than crashing.
+# ═══════════════════════════════════════════════════════════════
+def _utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass  # redirected/replaced stream — never break the CLI over output config
+
+
 def main(argv=None) -> int:
+    _utf8_stdio()
     ap = argparse.ArgumentParser(
         prog="repolens", description="Ranked repo search + a typed corpus linter."
     )
