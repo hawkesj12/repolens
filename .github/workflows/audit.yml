@@ -17,7 +17,10 @@ permissions:
 
 jobs:
   audit:
-    uses: hawkesj12/workflows/.github/workflows/audit.yml@main
+    # Deliberately @main: this is my own repo, so the supply-chain risk
+    # unpinned-uses guards against (someone else repointing a ref) does not
+    # apply — and pinning it would defeat the shared source of truth.
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@main # zizmor: ignore[unpinned-uses]
     permissions:
       contents: read
       id-token: write # Scorecard's OIDC; ignored by the other jobs
