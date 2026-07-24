@@ -48,11 +48,6 @@ All notable changes to this project are documented here. The format follows
   logging failure can't break a search). The find log accumulates the real queries run
   against a repo — future material for growing the benchmark from actual usage. New
   `repolens/log.py`; hooked in `cmd_find` and `semantic.embed_doc`.
-- **`find` shows the matching passage with each hit.** A result now carries the
-  passage that actually matched, not just the file path — a semantic hit shows its
-  best-matching chunk, a lexical hit shows the FTS5 excerpt around the terms, trimmed
-  to one line. The winning chunk was already found and stored; the per-doc rollup was
-  discarding it. `cmd_find` prints it under each hit; `--json` gains a `snippet` field.
 - **`repolens bench` + a committed gold set (`benchmarks/acceptance.jsonl`).** The
   reproducible answer to "does ranking, and then the semantic half, actually help?":
   18 query→gold-doc pairs across exact / conceptual / paraphrase classes, scored as
@@ -136,15 +131,6 @@ IMMEDIATE` + commit even when nothing changed, serializing concurrent `find`-ref
   guidance: for query-heavy agent use, point `[semantic].provider = "http"` at a resident
   Ollama so the model isn't reloaded per `find` (most of a hybrid query's latency).
 - **mypy is now part of CI** (the repo's own type gate; previously ruff + pytest only).
-- **Semantic search is now a default dependency — `pip install repolens` gives hybrid
-  out of the box.** `fastembed` + `sqlite-vec` + `numpy` moved from the opt-in
-  `[semantic]` extra into the core dependencies, because a new user who missed the extra
-  silently got the weaker lexical-only experience. Lexical (BM25) remains — as the
-  degrade-fallback when the model can't load and as the benchmark's control — and
-  `[semantic].enabled = false` still opts out of the model. The `[semantic]` extra is
-  kept as an empty alias so existing install commands still resolve. The core is no
-  longer stdlib-only; first run downloads a ~200MB model once (cached under
-  `~/.cache/repolens`).
 - **Renamed the on-disk footprint `.repometa` → `.repolens`.** The config file is now
   `.repolens.toml` and the disposable index cache is `.repolens/` (was `.repometa.toml`
   / `.repometa/`) — one consistent name matching the tool. The cache is gitignored and
@@ -169,6 +155,30 @@ IMMEDIATE` + commit even when nothing changed, serializing concurrent `find`-ref
   on the `archive/map-machinery` branch. Distribution is a plain CLI (pipx/PyPI) — not
   a Claude Code plugin. The bench gold set dropped its 6 queries that targeted the
   removed modules (24 → 18), so its numbers reflect only the surface that still ships.
+
+## [0.11.0] - 2026-07-17
+
+### Changed
+
+- **Semantic search is now a default dependency — `pip install repolens` gives hybrid
+  out of the box.** `fastembed` + `sqlite-vec` + `numpy` moved from the opt-in
+  `[semantic]` extra into the core dependencies, because a new user who missed the extra
+  silently got the weaker lexical-only experience. Lexical (BM25) remains — as the
+  degrade-fallback when the model can't load and as the benchmark's control — and
+  `[semantic].enabled = false` still opts out of the model. The `[semantic]` extra is
+  kept as an empty alias so existing install commands still resolve. The core is no
+  longer stdlib-only; first run downloads a ~200MB model once (cached under
+  `~/.cache/repolens`).
+
+## [0.10.0] - 2026-07-17
+
+### Added
+
+- **`find` shows the matching passage with each hit.** A result now carries the
+  passage that actually matched, not just the file path — a semantic hit shows its
+  best-matching chunk, a lexical hit shows the FTS5 excerpt around the terms, trimmed
+  to one line. The winning chunk was already found and stored; the per-doc rollup was
+  discarding it. `cmd_find` prints it under each hit; `--json` gains a `snippet` field.
 
 ## [0.9.0] — 2026-07-15
 
@@ -470,7 +480,13 @@ Hardening pass from an independent three-lens review, ahead of a PyPI release.
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/hawkesj12/repolens/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/hawkesj12/repolens/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/hawkesj12/repolens/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/hawkesj12/repolens/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/hawkesj12/repolens/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/hawkesj12/repolens/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/hawkesj12/repolens/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/hawkesj12/repolens/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/hawkesj12/repolens/compare/v0.6.1...v0.7.0
