@@ -1,0 +1,26 @@
+name: Audit
+
+# Weekly, not on push. These checks find problems that appear WITHOUT this repo
+# changing — a CVE published against a dependency, a link that rotted, an action
+# tag repointed upstream. A failure emails you; that's the whole notification
+# mechanism, and no invocation is required.
+#
+# The checks themselves live in hawkesj12/workflows so every repo shares one copy.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # Mondays 09:00 ET (cron is UTC; 13:00 UTC = 09:00 EDT)
+  workflow_dispatch: # run it by hand from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@main
+    permissions:
+      contents: read
+      id-token: write # Scorecard's OIDC; ignored by the other jobs
+    with:
+      docs: "README.md CHANGELOG.md"
+      scorecard: true # repolens is public, so Scorecard can publish
