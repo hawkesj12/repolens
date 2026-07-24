@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-23
+
+### Fixed
+
+- **Changelog history and release metadata.** The 0.10.0 (`find` shows the matching
+  passage) and 0.11.0 (semantic search as a default dependency) entries had been
+  mis-filed inside a single overloaded 0.12.0 section; they are restored to their own
+  dated sections. The version compare-links in the footer, which stopped at v0.7.2, now
+  cover every release through v0.13.1, and git tags v0.8.0–v0.13.0 (previously missing)
+  were published. No code changes — this is a documentation/release-hygiene patch so the
+  packaged history matches the repo.
+
 ## [0.13.0] - 2026-07-20
 
 ### Added
@@ -480,7 +492,8 @@ Hardening pass from an independent three-lens review, ahead of a PyPI release.
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/hawkesj12/repolens/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/hawkesj12/repolens/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/hawkesj12/repolens/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/hawkesj12/repolens/compare/v0.10.0...v0.11.0
