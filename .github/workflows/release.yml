@@ -1,0 +1,99 @@
+name: Release
+
+# The TAG is the trigger. Pushing v1.2.3 builds from that exact commit and
+# publishes it — so the artifact on PyPI is provably the tagged source, not
+# whatever happened to be on a laptop.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # Re-run the full suite on the tagged commit. `ci.yml` triggers on push-to-main
+  # and pull_request, neither of which fires for a tag — so without this job a
+  # release would publish having run no tests at all.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        # --no-sources: build without tool.uv.sources, matching what other build
+        # frontends see. Astral recommends it specifically for publishing.
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --wheel --outdir dist
+
+      - name: Verify the tag matches the packaged version
+        # A tag of v0.13.2 that ships 0.13.1 is unrecoverable once published,
+        # because a PyPI version can never be replaced. Catch it here.
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")"
+          echo "tag=$TAG  pyproject=$PKG"
+          [ "$TAG" = "$PKG" ] || { echo "MISMATCH: tag $TAG != pyproject $PKG"; exit 1; }
+
+      - name: Check metadata renders on PyPI
+        run: |
+          python -m pip install --upgrade twine
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # A GitHub Environment lets you require your own approval before the
+    # irreversible step, and scopes the OIDC identity PyPI trusts.
+    environment: pypi
+    permissions:
+      # REQUIRED for Trusted Publishing: mints the short-lived OIDC token PyPI
+      # exchanges for a 15-minute, project-scoped upload token. No stored secret.
+      # Attestations (PEP 740) are produced by default under Trusted Publishing
+      # and ride this same identity — PyPI REJECTS them from any other identity,
+      # so publishing from a laptop token cannot produce provenance at all.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creating a Release writes to the repo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub Release from the changelog
+        # pypa/gh-action-pypi-publish publishes to PyPI and nothing else —
+        # creating a Release is explicitly outside its scope, so it happens here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v v="$VER" '$0 ~ "^## \\["v"\\]"{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
+            | sed '/./,$!d' > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes dist/*
+          fi

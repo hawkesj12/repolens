@@ -4,6 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets release.yml re-run this whole suite on a tagged commit. A tag push fires
+  # neither of the triggers above, so without this a release could publish having
+  # run no tests. Only the TEST half is reusable — Trusted Publishing cannot run
+  # inside a reusable workflow, so the publish job stays in release.yml.
+  workflow_call:
+
+# Least privilege. Without this the job token gets the repo default, which can be
+# broad enough to write contents — far more than a test run needs.
+permissions:
+  contents: read
+
+# Don't burn 9 runners on a commit that's already superseded. Cancelling is only
+# safe on PRs: on main, a cancelled run leaves that commit with NO result, and a
+# required status check has nothing to read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -22,6 +39,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install (package + dev tools)
         # Dev tools are PINNED on purpose: unpinned, a new ruff/mypy release turns
         # main red on a commit that changed nothing. Bump these deliberately.
@@ -87,3 +106,18 @@ jobs:
             || { echo "FAIL: find did not locate docs/guide.md"; exit 1; }
 
           echo "end-to-end OK: rule written, $N indexed, find works"
+
+  # One stable check for the branch ruleset to require. Requiring the 9 matrix
+  # jobs by name ("test (ubuntu-latest, 3.11)", …) breaks the moment the matrix
+  # changes; this collapses them into a single gate that survives that.
+  # `if: always()` is load-bearing: without it this job is SKIPPED when `test`
+  # fails, and a skipped required check does not read as a failure.
+  ci-ok:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: All matrix jobs must have succeeded
+        run: |
+          echo "test result: ${{ needs.test.result }}"
+          [ "${{ needs.test.result }}" = "success" ] || exit 1

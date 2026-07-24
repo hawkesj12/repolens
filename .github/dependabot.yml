@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # GitHub Actions are pinned by MUTABLE tags (@v4, @release/v1). A tag can be
+  # repointed by whoever controls that repo — the vector behind real supply-chain
+  # compromises. Dependabot opening PRs here is what makes SHA-pinning
+  # maintainable: it bumps the pin for you instead of the pin rotting.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Runtime deps (fastembed, sqlite-vec, numpy) plus the pinned dev tools. The
+  # pins are deliberate — they stop an upstream release turning main red on a
+  # commit that changed nothing — but a pin nobody ever bumps becomes a stale
+  # pin. This surfaces each bump as a reviewable PR that CI must pass.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    groups:
+      python:
+        patterns: ["*"]
