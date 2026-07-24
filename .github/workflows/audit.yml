@@ -23,22 +23,27 @@ permissions:
 
 jobs:
   audit:
-    # Pinned to a TAG, not @main — and not for the usual reason. This is my own
-    # repo, so the supply-chain risk unpinned-uses guards against (someone else
-    # repointing a ref) genuinely doesn't apply. The reason is blast radius:
+    # Pinned to a RELEASE, not @main — and not for the usual reason. This is my
+    # own repo, so the supply-chain risk hash-pinning guards against (someone
+    # else repointing a ref) genuinely doesn't apply. The reason is blast radius:
     # @main has no staging channel, so every caller's next scheduled run executes
     # whatever was last pushed there, and you find out from failure emails rather
-    # than a diff. A tag makes main the place changes get tried and this the thing
-    # the fleet runs. Dependabot bumps this line — its github-actions ecosystem
-    # covers reusable-workflow refs — so the pin reconciles instead of rotting.
-    uses: hawkesj12/workflows/.github/workflows/audit.yml@v1.1.0
+    # than a diff. A release makes main the place changes get tried and this the
+    # thing the fleet runs. Dependabot bumps this line — its github-actions
+    # ecosystem covers reusable-workflow refs — so the pin reconciles, not rots.
+    #
+    # By SHA rather than by tag, so no exception to the blanket hash-pin policy is
+    # needed. The earlier .github/zizmor.yml carved one out for hawkesj12/*, and
+    # its comment claimed a tag discipline that `ref-pin` does not enforce — it
+    # accepts @main just as happily. A rule that cannot fail on the thing it names
+    # is worse than no rule, so the exception is gone and this is pinned like
+    # every other action here.
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@03a795dbf7a85055a535ffad118f7e098457a126 # v1.2.0
     permissions:
       # The UNION of what every job in the called workflow needs. Permissions only
       # narrow down a reusable-workflow chain, so granting less than a called
       # workflow declares is a startup_failure — no jobs, no log, no annotation.
       contents: read
-      actions: read # osv-scanner reusable workflow
-      security-events: write # ditto (declared even with upload-sarif: false)
       id-token: write # Scorecard's OIDC
     with:
       docs: "README.md CHANGELOG.md"
