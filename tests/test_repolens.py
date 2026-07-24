@@ -1578,7 +1578,11 @@ def test_cli_survives_a_legacy_codepage_console(tmp_path):
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "PYTHONIOENCODING": "cp1252", "REPOLENS_MODEL_LOAD_TIMEOUT": "1"},
+        env={
+            **os.environ,
+            "PYTHONIOENCODING": "cp1252",
+            "REPOLENS_MODEL_LOAD_TIMEOUT": "1",
+        },
     )
     assert "UnicodeEncodeError" not in out.stderr, (
         "CLI crashed writing non-ASCII to a cp1252 console:\n" + out.stderr[-600:]

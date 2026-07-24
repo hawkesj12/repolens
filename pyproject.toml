@@ -44,6 +44,7 @@ repolens = "repolens.cli:main"
 Homepage = "https://github.com/hawkesj12/repolens"
 Repository = "https://github.com/hawkesj12/repolens"
 Issues = "https://github.com/hawkesj12/repolens/issues"
+Changelog = "https://github.com/hawkesj12/repolens/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["repolens"]
@@ -56,3 +57,10 @@ pythonpath = ["."]
 [[tool.mypy.overrides]]
 module = ["fastembed", "sqlite_vec", "loguru"]
 ignore_missing_imports = true
+
+[tool.deptry.per_rule_ignores]
+# loguru is imported ONLY inside a try/except ImportError, purely to silence
+# fastembed's log spam when the model degrades. It arrives transitively via
+# fastembed and is never required — declaring it would force it on every user
+# for a cosmetic nicety.
+DEP001 = ["loguru"]

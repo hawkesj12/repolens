@@ -96,7 +96,10 @@ jobs:
 
           test -s .claude/rules/repolens.md || { echo "FAIL: agent routing rule not written"; exit 1; }
           test -s .repolens.toml            || { echo "FAIL: .repolens.toml not written"; exit 1; }
-          grep -q '\\' .repolens.toml       && { echo "FAIL: native separator in config"; exit 1; }
+          # A literal backslash written inline trips shellcheck SC1003 in either
+          # quoting form; build it from its octal code so the intent is unambiguous.
+          BSLASH="$(printf '\134')"
+          grep -qF "$BSLASH" .repolens.toml && { echo "FAIL: native separator in config"; exit 1; }
           grep -q '\.repolens/' .gitignore  || { echo "FAIL: .repolens/ not gitignored"; exit 1; }
 
           N=$("$VBIN/python" -c "import sqlite3;print(sqlite3.connect('.repolens/index.db').execute('SELECT count(*) FROM docs').fetchone()[0])")

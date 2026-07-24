@@ -1,0 +1,60 @@
+# Deterministic checks that run on every commit, on changed files only.
+#
+# The binaries are installed globally, but pre-commit runs its OWN pinned copies
+# in isolated environments — so what runs here is reproducible and identical for
+# anyone who clones this repo, regardless of what's on their machine. That is the
+# point: a local pass has to predict the CI result.
+#
+# Update the pins deliberately:  pre-commit autoupdate
+# Run against everything:        pre-commit run --all-files
+#
+# zizmor and lychee are deliberately NOT here — zizmor only inspects workflow
+# files (CI is the right place) and lychee makes network calls that shouldn't
+# block a commit.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files # a big blob bloats history forever
+        args: [--maxkb=5000]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0 # keep equal to the pin in .github/workflows/ci.yml
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/fpgmaas/deptry
+    rev: 0.25.1
+    hooks:
+      - id: deptry
+
+  - repo: local
+    hooks:
+      # repolens' own corpus linter. `repolens init` installs this as a bare
+      # .git/hooks/pre-commit; installing pre-commit displaces that file and does
+      # NOT chain it, so declaring it here is what keeps it actually running.
+      - id: repolens-lint
+        name: repolens corpus lint
+        entry: repolens lint --strict
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -405,7 +405,7 @@ def _embed_http(config: dict, texts: list[str]):
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-        # endpoint down / slow / non-2xx / unparseable body — surface a clear error the
+        # endpoint down / slow / non-2xx / unparsable body — surface a clear error the
         # read+build path catches and degrades on, instead of a raw traceback.
         raise EmbeddingError(f"embedding endpoint {sm['endpoint']} failed: {e}") from e
     items = sorted(body.get("data") or [], key=lambda it: it.get("index", 0))
