@@ -42,7 +42,7 @@ def cmd_init(args) -> int:
         print(f"{root.CONFIG_NAME} already exists (use --force to overwrite)")
     else:
         cfg_path.write_text(templates.DEFAULT_CONFIG, encoding="utf-8")
-        print(f"wrote {cfg_path.relative_to(r)}")
+        print(f"wrote {cfg_path.relative_to(r).as_posix()}")
         # Auto-discover SQLite DBs and wire them in (only when we freshly wrote
         # the config, so a re-run can't append a duplicate [integrations.sqlite]).
         if not args.no_db:
@@ -94,7 +94,7 @@ def cmd_init(args) -> int:
         else:
             rule.parent.mkdir(parents=True, exist_ok=True)
             rule.write_text(templates.claude_rule(r.name), encoding="utf-8")
-            print(f"wrote {rule.relative_to(r)} (agent routing rule)")
+            print(f"wrote {rule.relative_to(r).as_posix()} (agent routing rule)")
 
     print('repolens initialized. Run `repolens index` then `repolens find "..."`.')
     return 0
@@ -112,7 +112,7 @@ def cmd_index(args) -> int:
             kb = cfg["index_path"].stat().st_size / 1024
             tbl = f" + {tables} db tables" if tables else ""
             print(
-                f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r)} ({kb:.0f} KB)"
+                f"built index: {n} docs + {code} code{tbl} in {ms:.0f} ms → {cfg['index_path'].relative_to(r).as_posix()} ({kb:.0f} KB)"
             )
         else:
             changed, deleted, ms = index.build_incremental(r, cfg)

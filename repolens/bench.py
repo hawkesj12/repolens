@@ -108,7 +108,7 @@ def _grep_corpus(config: dict) -> list[tuple[str, str]]:
     seen: set[str] = set()
     for is_code in (False, True):
         for p in _index._walk(root, config, code=is_code):
-            rel = str(p.relative_to(root))
+            rel = p.relative_to(root).as_posix()
             if rel in seen:
                 continue
             seen.add(rel)

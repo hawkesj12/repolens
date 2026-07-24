@@ -83,7 +83,7 @@ def _walk(root: pathlib.Path, config: dict, code: bool):
                 p = pathlib.Path(dp) / fn
                 if p.is_symlink():
                     continue  # never follow a symlink out of the repo (leak surface)
-                rel = str(p.relative_to(root))
+                rel = p.relative_to(root).as_posix()
                 if rel in skip_files:
                     continue
                 if allowed is not None and rel not in allowed:
@@ -211,7 +211,7 @@ def _insert_doc(
     config: dict,
     max_bytes: int = 0,
 ) -> bool:
-    rel = str(p.relative_to(root))
+    rel = p.relative_to(root).as_posix()
     try:
         if max_bytes and p.stat().st_size > max_bytes:
             return False  # too large — skip (see max_file_bytes)
@@ -310,7 +310,7 @@ def build(
                 size, mtime = _stat(p)
                 con.execute(
                     "INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
-                    (str(p.relative_to(root)), size, mtime, _content_hash(p)),
+                    (p.relative_to(root).as_posix(), size, mtime, _content_hash(p)),
                 )
             except OSError:
                 pass
@@ -393,7 +393,7 @@ def build_incremental(root: pathlib.Path, config: dict) -> tuple[int, int, float
     stat_changed: list[tuple[str, pathlib.Path, int, float, bool]] = []
     for is_code in (False, True):
         for p in _walk(root, config, code=is_code):
-            rel = str(p.relative_to(root))
+            rel = p.relative_to(root).as_posix()
             seen.add(rel)
             try:
                 size, mtime = _stat(p)

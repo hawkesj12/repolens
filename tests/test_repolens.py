@@ -332,7 +332,9 @@ def test_discover_finds_real_skips_backup_cache_and_nonsqlite(tmp_path):
     _root, cfg = _repo(tmp_path, "")
     _mkdb(tmp_path / "data/app.db", ["users", "orders"])  # real, 2 tables
     _mkdb(tmp_path / "data/app.db.bak-20260101", ["users"])  # backup → skip
-    (tmp_path / "data/notes.db").write_text("not a database", encoding="utf-8")  # non-sqlite → skip
+    (tmp_path / "data/notes.db").write_text(
+        "not a database", encoding="utf-8"
+    )  # non-sqlite → skip
     _mkdb(cfg["index_path"], ["docs"])  # repolens's own cache → skip
     assert discover.discover_sqlite_dbs(tmp_path, cfg) == [("data/app.db", 2)]
 
@@ -383,7 +385,9 @@ def test_cmd_init_no_db_skips_discovery(tmp_path, monkeypatch):
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init", "--no-db"])
     # no ACTIVE block appended (the template's own block is commented: "# [")
-    assert "\n[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(encoding="utf-8")
+    assert "\n[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(
+        encoding="utf-8"
+    )
     assert root.load_config(tmp_path)["sqlite_paths"] == []
 
 
@@ -392,7 +396,9 @@ def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     (tmp_path / ".repolens.toml").write_text("[repolens]\n", encoding="utf-8")
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init"])  # config exists, no --force → no discovery/append
-    assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(encoding="utf-8")
+    assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_cmd_init_writes_claude_rule(tmp_path, monkeypatch):
@@ -997,7 +1003,9 @@ def test_build_incremental_releases_lock_on_error(tmp_path, monkeypatch):
     # forced error, a fresh build_incremental on the same index must succeed.
     _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\none\n"})
     index.build(tmp_path, cfg)
-    (tmp_path / "b.md").write_text("# B\n\ntwo\n", encoding="utf-8")  # a change to force an insert
+    (tmp_path / "b.md").write_text(
+        "# B\n\ntwo\n", encoding="utf-8"
+    )  # a change to force an insert
     real_insert = index._insert_doc
 
     def _boom(*a, **k):
@@ -1178,7 +1186,9 @@ def test_incremental_skips_candidate_a_peer_already_committed(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\none\n"})
     index.build(tmp_path, cfg)
     p = tmp_path / "a.md"
-    p.write_text("# a\n\ntwo changed\n", encoding="utf-8")  # a real change → a stat_changed candidate
+    p.write_text(
+        "# a\n\ntwo changed\n", encoding="utf-8"
+    )  # a real change → a stat_changed candidate
     new_hash = index._content_hash(p)
     # Simulate the peer having ALREADY committed this exact content: store the new hash but
     # an old mtime, so the stat-gate still flags it but the post-lock hash check matches.
@@ -1210,7 +1220,9 @@ def test_legacy_repometa_config_read_with_warning(tmp_path, monkeypatch, capsys)
     # #4: a pre-0.11 .repometa.toml (no .repolens.toml) is still read, with a one-time
     # deprecation warning — so an un-migrated repo keeps its config, not defaults.
     monkeypatch.setattr(root, "_LEGACY_WARNED", False)
-    (tmp_path / ".repometa.toml").write_text("[repolens]\nmax_file_bytes = 4242\n", encoding="utf-8")
+    (tmp_path / ".repometa.toml").write_text(
+        "[repolens]\nmax_file_bytes = 4242\n", encoding="utf-8"
+    )
     cfg = root.load_config(tmp_path)
     assert cfg["max_file_bytes"] == 4242  # legacy config honored
     assert "deprecated" in capsys.readouterr().err.lower()
@@ -1324,8 +1336,9 @@ def test_bench_load_gold_validates(tmp_path):
     p.write_text(
         '{"query": "q", "gold": "a.md"}\n'
         "\n"
-        '{"query": "r", "gold": ["b.md"], "class": "exact"}\n'
-    , encoding="utf-8")
+        '{"query": "r", "gold": ["b.md"], "class": "exact"}\n',
+        encoding="utf-8",
+    )
     gold = bench.load_gold(p)
     assert gold[0]["gold"] == ["a.md"]  # bare string is wrapped
     assert gold[0]["class"] == "conceptual"  # default class
@@ -1441,7 +1454,9 @@ def test_log_event_noop_when_disabled(tmp_path):
 def test_log_event_never_raises_on_bad_path(tmp_path):
     _root, cfg = _repo(tmp_path, "[log]\nenabled = true\n")
     blocker = tmp_path / "blocker"
-    blocker.write_text("x", encoding="utf-8")  # a FILE where the log dir would need to be
+    blocker.write_text(
+        "x", encoding="utf-8"
+    )  # a FILE where the log dir would need to be
     cfg["index_path"] = blocker / "sub" / "index.db"  # parent mkdir must fail
     log.event(cfg, "embed", relpath="a.md")  # swallowed — must not raise
 
@@ -1455,7 +1470,9 @@ def test_cmd_find_logs_the_query(tmp_path, monkeypatch):
     cli.main(["find", "hello"])
     events = [
         json.loads(line)
-        for line in (tmp_path / ".repolens" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / ".repolens" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     finds = [e for e in events if e["type"] == "find"]
     assert finds and finds[-1]["query"] == "hello"
@@ -1471,7 +1488,9 @@ def test_cmd_find_logs_the_query(tmp_path, monkeypatch):
 # characters survive a round trip, so the Windows CI job can actually prove it.
 # ═══════════════════════════════════════════════════════════════
 def test_non_ascii_survives_indexing(tmp_path):
-    prose = "# Café — naïve résumé\n\nThe em-dash — and “curly quotes” — must survive.\n"
+    prose = (
+        "# Café — naïve résumé\n\nThe em-dash — and “curly quotes” — must survive.\n"
+    )
     _root, cfg = _repo(tmp_path, "", {"unicode.md": prose})
     index.build(tmp_path, cfg)
     con = sqlite3.connect(cfg["index_path"])
@@ -1492,3 +1511,45 @@ def test_lint_reads_non_ascii_without_mangling(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"doc.md": "# Título — ok\n\nbody\n"})
     findings = lint.lint(tmp_path, cfg)
     assert not any(f["check"] == "no-heading" for f in findings)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Cross-platform path identity
+# ═══════════════════════════════════════════════════════════════
+# Repo-relative paths are IDENTIFIERS: stored in SQLite, written into the TOML
+# config, and compared against `git ls-files` output (which is always posix).
+# str(Path.relative_to()) yields backslashes on Windows, so a native separator
+# leaking in means stored keys don't match, config gains invalid TOML escapes
+# ("data\app.db" — \a is an escape), and every file looks gitignored so the
+# index comes out EMPTY. These assert the posix form on every platform.
+# ═══════════════════════════════════════════════════════════════
+def test_stored_relpaths_are_always_posix(tmp_path):
+    _root, cfg = _repo(
+        tmp_path,
+        "",
+        {"docs/deep/nested.md": "# N\n\nbody\n", "pkg/mod.py": '"""does x."""\n'},
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    for (rel,) in con.execute("SELECT relpath FROM docs"):
+        assert "\\" not in rel, (
+            f"native separator leaked into a stored relpath: {rel!r}"
+        )
+    for (rel,) in con.execute("SELECT relpath FROM files"):
+        assert "\\" not in rel, f"native separator leaked into files table: {rel!r}"
+
+
+def test_frontmatter_keys_use_posix_relpaths(tmp_path):
+    _root, cfg = _repo(
+        tmp_path, "", {"rules/x.md": "---\ntype: rule\n---\n\n# X\n\nbody\n"}
+    )
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    rels = [r for (r,) in con.execute("SELECT DISTINCT relpath FROM frontmatter")]
+    assert "rules/x.md" in rels, f"frontmatter keyed by a native path: {rels}"
+
+
+def test_lint_findings_use_posix_relpaths(tmp_path):
+    _root, cfg = _repo(tmp_path, "", {"docs/empty.md": "   \n"})
+    findings = lint.lint(tmp_path, cfg)
+    assert findings and all("\\" not in f["path"] for f in findings)

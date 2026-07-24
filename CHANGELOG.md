@@ -16,12 +16,26 @@ ValueError)` when writing the optional event log, `(ImportError, AttributeError)
   The model-load handler still catches broadly on purpose: its job is to degrade to
   lexical-only search rather than let a bad model break `find`.
 
+- **Windows: repo-relative paths are now always stored in posix form.** They are
+  identifiers — written into the index, into `repolens.toml`, and compared against
+  `git ls-files` output, which is always forward-slashed. On Windows the native
+  separator leaked in, so stored keys stopped matching (frontmatter lookups silently
+  returned nothing), `repolens init` wrote `paths = ["data\app.db"]` into TOML where
+  `\a` is an escape sequence, and — worst — every file compared unequal to the
+  gitignore allowlist, so **indexing inside a git repo produced an empty index.**
+- **Windows: text I/O is explicitly UTF-8.** Python defaults text reads to the system
+  locale there (usually cp1252), which maps all 256 bytes and so never raises — it
+  silently mojibakes. Indexing a document containing an em-dash or curly quotes stored
+  mangled text with no error.
+
 ### Changed
 
 - **CI now pins its own tools.** The test matrix installed `ruff`, `pytest`, and `mypy`
   unpinned, so a new upstream release could turn the build red on a commit that changed
   nothing — which is exactly what happened when ruff 0.16 enabled new rules. Versions are
   now explicit and upgraded deliberately. No effect on the published package.
+- **CI now runs on Windows** as well as Linux and macOS (9 jobs). The two Windows bugs
+  above were found by the first run of that matrix.
 
 ## [0.13.1] - 2026-07-23
 

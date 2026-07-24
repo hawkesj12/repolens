@@ -41,7 +41,7 @@ def discover_sqlite_dbs(root: pathlib.Path, config: dict) -> list[tuple[str, int
                 continue
             n = _table_count(p)
             if n > 0:
-                found.append((str(p.relative_to(root)), n))
+                found.append((p.relative_to(root).as_posix(), n))
     found.sort()
     return found
 

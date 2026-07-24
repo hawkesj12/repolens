@@ -57,7 +57,7 @@ def lint(root, config: dict, stale_days: int = 180) -> list[dict]:
             {
                 "severity": sev,
                 "check": check,
-                "path": str(p.relative_to(root)),
+                "path": p.relative_to(root).as_posix(),
                 "message": msg,
             }
         )
@@ -67,7 +67,7 @@ def lint(root, config: dict, stale_days: int = 180) -> list[dict]:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        rel = str(p.relative_to(root))
+        rel = p.relative_to(root).as_posix()
         stripped = text.strip()
 
         if not stripped:
