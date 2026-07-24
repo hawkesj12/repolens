@@ -23,10 +23,15 @@ permissions:
 
 jobs:
   audit:
-    # Deliberately @main: this is my own repo, so the supply-chain risk
-    # unpinned-uses guards against (someone else repointing a ref) does not
-    # apply — and pinning it would defeat the shared source of truth.
-    uses: hawkesj12/workflows/.github/workflows/audit.yml@main # zizmor: ignore[unpinned-uses]
+    # Pinned to a TAG, not @main — and not for the usual reason. This is my own
+    # repo, so the supply-chain risk unpinned-uses guards against (someone else
+    # repointing a ref) genuinely doesn't apply. The reason is blast radius:
+    # @main has no staging channel, so every caller's next scheduled run executes
+    # whatever was last pushed there, and you find out from failure emails rather
+    # than a diff. A tag makes main the place changes get tried and this the thing
+    # the fleet runs. Dependabot bumps this line — its github-actions ecosystem
+    # covers reusable-workflow refs — so the pin reconciles instead of rotting.
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@v1.0.0
     permissions:
       # The UNION of what every job in the called workflow needs. Permissions only
       # narrow down a reusable-workflow chain, so granting less than a called
