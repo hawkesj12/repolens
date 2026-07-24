@@ -27,3 +27,8 @@ VISION.md
 # Editors / IDEs
 .idea/
 .vscode/
+# scratch drafts (Oracle spikes, throwaway experiments)
+drafts/
+# coverage.py data file
+.coverage
+.coverage.*
