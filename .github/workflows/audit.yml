@@ -31,7 +31,7 @@ jobs:
     # than a diff. A tag makes main the place changes get tried and this the thing
     # the fleet runs. Dependabot bumps this line — its github-actions ecosystem
     # covers reusable-workflow refs — so the pin reconciles instead of rotting.
-    uses: hawkesj12/workflows/.github/workflows/audit.yml@v1.0.0
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@v1.1.0
     permissions:
       # The UNION of what every job in the called workflow needs. Permissions only
       # narrow down a reusable-workflow chain, so granting less than a called
