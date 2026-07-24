@@ -22,8 +22,13 @@ jobs:
     # apply — and pinning it would defeat the shared source of truth.
     uses: hawkesj12/workflows/.github/workflows/audit.yml@main # zizmor: ignore[unpinned-uses]
     permissions:
+      # The UNION of what every job in the called workflow needs. Permissions only
+      # narrow down a reusable-workflow chain, so granting less than a called
+      # workflow declares is a startup_failure — no jobs, no log, no annotation.
       contents: read
-      id-token: write # Scorecard's OIDC; ignored by the other jobs
+      actions: read # osv-scanner reusable workflow
+      security-events: write # ditto (declared even with upload-sarif: false)
+      id-token: write # Scorecard's OIDC
     with:
       docs: "README.md CHANGELOG.md"
       scorecard: true # repolens is public, so Scorecard can publish
