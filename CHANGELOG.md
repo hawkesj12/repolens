@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Errors are no longer swallowed indiscriminately.** Several `except Exception:`
+  handlers caught every possible failure and moved on silently. Each now catches only what
+  can actually occur there — `OSError` when reading a file, `(OSError, TypeError,
+ValueError)` when writing the optional event log, `(ImportError, AttributeError)` when
+  quieting the embedder's logging. Anything unexpected now surfaces instead of hiding.
+  The model-load handler still catches broadly on purpose: its job is to degrade to
+  lexical-only search rather than let a bad model break `find`.
+
+### Changed
+
+- **CI now pins its own tools.** The test matrix installed `ruff`, `pytest`, and `mypy`
+  unpinned, so a new upstream release could turn the build red on a commit that changed
+  nothing — which is exactly what happened when ruff 0.16 enabled new rules. Versions are
+  now explicit and upgraded deliberately. No effect on the published package.
+
 ## [0.13.1] - 2026-07-23
 
 ### Fixed

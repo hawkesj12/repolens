@@ -52,11 +52,11 @@ def _mkdb(path, tables):
 
 
 def _repo(tmp_path, toml="", files=None):
-    (tmp_path / ".repolens.toml").write_text(toml)
+    (tmp_path / ".repolens.toml").write_text(toml, encoding="utf-8")
     for rel, body in (files or {}).items():
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(body)
+        p.write_text(body, encoding="utf-8")
     return tmp_path, root.load_config(tmp_path)
 
 
@@ -75,7 +75,7 @@ recursive = false
 
 # ── root + config ──────────────────────────────────────────────
 def test_find_root_via_marker(tmp_path):
-    (tmp_path / ".repolens.toml").write_text("")
+    (tmp_path / ".repolens.toml").write_text("", encoding="utf-8")
     sub = tmp_path / "a" / "b"
     sub.mkdir(parents=True)
     assert root.find_root(sub) == tmp_path.resolve()
@@ -332,7 +332,7 @@ def test_discover_finds_real_skips_backup_cache_and_nonsqlite(tmp_path):
     _root, cfg = _repo(tmp_path, "")
     _mkdb(tmp_path / "data/app.db", ["users", "orders"])  # real, 2 tables
     _mkdb(tmp_path / "data/app.db.bak-20260101", ["users"])  # backup → skip
-    (tmp_path / "data/notes.db").write_text("not a database")  # non-sqlite → skip
+    (tmp_path / "data/notes.db").write_text("not a database", encoding="utf-8")  # non-sqlite → skip
     _mkdb(cfg["index_path"], ["docs"])  # repolens's own cache → skip
     assert discover.discover_sqlite_dbs(tmp_path, cfg) == [("data/app.db", 2)]
 
@@ -372,7 +372,7 @@ def test_cmd_init_wires_discovered_db(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
     _mkdb(tmp_path / "data/app.db", ["users", "orders"])
     cli.main(["init"])
-    cfg_text = (tmp_path / ".repolens.toml").read_text()
+    cfg_text = (tmp_path / ".repolens.toml").read_text(encoding="utf-8")
     assert 'paths = ["data/app.db"]' in cfg_text
     assert root.load_config(tmp_path)["sqlite_paths"] == [tmp_path / "data/app.db"]
     assert "found data/app.db (2 tables)" in capsys.readouterr().out
@@ -383,16 +383,16 @@ def test_cmd_init_no_db_skips_discovery(tmp_path, monkeypatch):
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init", "--no-db"])
     # no ACTIVE block appended (the template's own block is commented: "# [")
-    assert "\n[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
+    assert "\n[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(encoding="utf-8")
     assert root.load_config(tmp_path)["sqlite_paths"] == []
 
 
 def test_cmd_init_existing_config_no_append(tmp_path, monkeypatch):
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
-    (tmp_path / ".repolens.toml").write_text("[repolens]\n")
+    (tmp_path / ".repolens.toml").write_text("[repolens]\n", encoding="utf-8")
     _mkdb(tmp_path / "app.db", ["t"])
     cli.main(["init"])  # config exists, no --force → no discovery/append
-    assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text()
+    assert "[integrations.sqlite]" not in (tmp_path / ".repolens.toml").read_text(encoding="utf-8")
 
 
 def test_cmd_init_writes_claude_rule(tmp_path, monkeypatch):
@@ -400,7 +400,7 @@ def test_cmd_init_writes_claude_rule(tmp_path, monkeypatch):
     cli.main(["init", "--no-db"])
     rule = tmp_path / ".claude" / "rules" / "repolens.md"
     assert rule.exists()
-    body = rule.read_text()
+    body = rule.read_text(encoding="utf-8")
     assert f"# RepoLens — {tmp_path.name}" in body  # repo name filled in
     assert "repolens find" in body  # the actual routing instruction
 
@@ -415,9 +415,9 @@ def test_cmd_init_preserves_existing_claude_rule(tmp_path, monkeypatch):
     monkeypatch.setattr(root, "find_root", lambda *a, **k: tmp_path)
     rule = tmp_path / ".claude" / "rules" / "repolens.md"
     rule.parent.mkdir(parents=True)
-    rule.write_text("HAND-CURATED — do not clobber\n")
+    rule.write_text("HAND-CURATED — do not clobber\n", encoding="utf-8")
     cli.main(["init", "--no-db"])  # no --force → leave the curated file alone
-    assert rule.read_text() == "HAND-CURATED — do not clobber\n"
+    assert rule.read_text(encoding="utf-8") == "HAND-CURATED — do not clobber\n"
 
 
 # ── hook (NON-DESTRUCTIVE) ─────────────────────────────────────
@@ -492,7 +492,7 @@ def test_index_skips_symlinks(tmp_path):
     # A file symlink must never be followed out of the repo — else a link to
     # /etc/passwd or ~/.ssh/id_rsa lands in an agent's context (panel security).
     outside = tmp_path.parent / "outside_secret.md"
-    outside.write_text("# secret\n\nleaked_via_symlink token\n")
+    outside.write_text("# secret\n\nleaked_via_symlink token\n", encoding="utf-8")
     _root, cfg = _repo(tmp_path, "", {"real.md": "# real\n\nlegit body\n"})
     (tmp_path / "link.md").symlink_to(outside)
     index.build(tmp_path, cfg)
@@ -590,7 +590,7 @@ def test_incremental_reindexes_only_changed(tmp_path):
         tmp_path, "", {"a.md": "# A\n\nalpha\n", "b.md": "# B\n\nbeta\n"}
     )
     index.build(tmp_path, cfg)
-    (tmp_path / "a.md").write_text("# A2\n\nalphachanged\n")
+    (tmp_path / "a.md").write_text("# A2\n\nalphachanged\n", encoding="utf-8")
     changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
     assert changed == 1 and deleted == 0
     assert any(h["relpath"] == "a.md" for h in find.search(cfg, "alphachanged"))
@@ -599,7 +599,7 @@ def test_incremental_reindexes_only_changed(tmp_path):
 def test_incremental_detects_add(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nalpha\n"})
     index.build(tmp_path, cfg)
-    (tmp_path / "c.md").write_text("# C\n\ngamma\n")
+    (tmp_path / "c.md").write_text("# C\n\ngamma\n", encoding="utf-8")
     changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
     assert changed == 1 and deleted == 0
     assert any(h["relpath"] == "c.md" for h in find.search(cfg, "gamma"))
@@ -622,7 +622,7 @@ def test_incremental_reconciles_delete(tmp_path):
 def test_rebuild_full_still_works(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\nalpha\n"})
     index.build(tmp_path, cfg)
-    (tmp_path / "a.md").write_text("# A\n\nalpha delta\n")
+    (tmp_path / "a.md").write_text("# A\n\nalpha delta\n", encoding="utf-8")
     index.build_incremental(tmp_path, cfg)
     n, _code, _t, _ms = index.build(tmp_path, cfg)  # full rebuild parity
     assert n == 1
@@ -997,7 +997,7 @@ def test_build_incremental_releases_lock_on_error(tmp_path, monkeypatch):
     # forced error, a fresh build_incremental on the same index must succeed.
     _root, cfg = _repo(tmp_path, "", {"a.md": "# A\n\none\n"})
     index.build(tmp_path, cfg)
-    (tmp_path / "b.md").write_text("# B\n\ntwo\n")  # a change to force an insert
+    (tmp_path / "b.md").write_text("# B\n\ntwo\n", encoding="utf-8")  # a change to force an insert
     real_insert = index._insert_doc
 
     def _boom(*a, **k):
@@ -1178,7 +1178,7 @@ def test_incremental_skips_candidate_a_peer_already_committed(tmp_path):
     _root, cfg = _repo(tmp_path, "", {"a.md": "# a\n\none\n"})
     index.build(tmp_path, cfg)
     p = tmp_path / "a.md"
-    p.write_text("# a\n\ntwo changed\n")  # a real change → a stat_changed candidate
+    p.write_text("# a\n\ntwo changed\n", encoding="utf-8")  # a real change → a stat_changed candidate
     new_hash = index._content_hash(p)
     # Simulate the peer having ALREADY committed this exact content: store the new hash but
     # an old mtime, so the stat-gate still flags it but the post-lock hash check matches.
@@ -1210,7 +1210,7 @@ def test_legacy_repometa_config_read_with_warning(tmp_path, monkeypatch, capsys)
     # #4: a pre-0.11 .repometa.toml (no .repolens.toml) is still read, with a one-time
     # deprecation warning — so an un-migrated repo keeps its config, not defaults.
     monkeypatch.setattr(root, "_LEGACY_WARNED", False)
-    (tmp_path / ".repometa.toml").write_text("[repolens]\nmax_file_bytes = 4242\n")
+    (tmp_path / ".repometa.toml").write_text("[repolens]\nmax_file_bytes = 4242\n", encoding="utf-8")
     cfg = root.load_config(tmp_path)
     assert cfg["max_file_bytes"] == 4242  # legacy config honored
     assert "deprecated" in capsys.readouterr().err.lower()
@@ -1325,12 +1325,12 @@ def test_bench_load_gold_validates(tmp_path):
         '{"query": "q", "gold": "a.md"}\n'
         "\n"
         '{"query": "r", "gold": ["b.md"], "class": "exact"}\n'
-    )
+    , encoding="utf-8")
     gold = bench.load_gold(p)
     assert gold[0]["gold"] == ["a.md"]  # bare string is wrapped
     assert gold[0]["class"] == "conceptual"  # default class
     assert gold[1]["class"] == "exact"
-    p.write_text('{"query": "q"}\n')  # missing gold
+    p.write_text('{"query": "q"}\n', encoding="utf-8")  # missing gold
     with pytest.raises(ValueError):
         bench.load_gold(p)
 
@@ -1426,7 +1426,7 @@ def test_log_event_writes_valid_jsonl_when_enabled(tmp_path):
     log.event(cfg, "find", query="hello", mode="hybrid", n_hits=2)
     logpath = cfg["index_path"].parent / "events.jsonl"
     assert logpath.exists()
-    rec = json.loads(logpath.read_text().strip())
+    rec = json.loads(logpath.read_text(encoding="utf-8").strip())
     assert rec["type"] == "find" and rec["query"] == "hello" and rec["n_hits"] == 2
     assert "ts" in rec  # ISO-local timestamp present
 
@@ -1441,7 +1441,7 @@ def test_log_event_noop_when_disabled(tmp_path):
 def test_log_event_never_raises_on_bad_path(tmp_path):
     _root, cfg = _repo(tmp_path, "[log]\nenabled = true\n")
     blocker = tmp_path / "blocker"
-    blocker.write_text("x")  # a FILE where the log dir would need to be
+    blocker.write_text("x", encoding="utf-8")  # a FILE where the log dir would need to be
     cfg["index_path"] = blocker / "sub" / "index.db"  # parent mkdir must fail
     log.event(cfg, "embed", relpath="a.md")  # swallowed — must not raise
 
@@ -1455,7 +1455,40 @@ def test_cmd_find_logs_the_query(tmp_path, monkeypatch):
     cli.main(["find", "hello"])
     events = [
         json.loads(line)
-        for line in (tmp_path / ".repolens" / "events.jsonl").read_text().splitlines()
+        for line in (tmp_path / ".repolens" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     finds = [e for e in events if e["type"] == "find"]
     assert finds and finds[-1]["query"] == "hello"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Cross-platform text encoding
+# ═══════════════════════════════════════════════════════════════
+# Windows defaults text I/O to the system locale (usually cp1252), not UTF-8.
+# cp1252 maps all 256 bytes, so it never raises — it silently mojibakes. Without
+# an explicit encoding, indexing a doc containing an em-dash or a curly quote
+# would store mangled text and nobody would see an error. These assert the real
+# characters survive a round trip, so the Windows CI job can actually prove it.
+# ═══════════════════════════════════════════════════════════════
+def test_non_ascii_survives_indexing(tmp_path):
+    prose = "# Café — naïve résumé\n\nThe em-dash — and “curly quotes” — must survive.\n"
+    _root, cfg = _repo(tmp_path, "", {"unicode.md": prose})
+    index.build(tmp_path, cfg)
+    con = sqlite3.connect(cfg["index_path"])
+    body = con.execute("SELECT body FROM docs WHERE relpath='unicode.md'").fetchone()[0]
+    assert "—" in body, "em-dash was mangled (encoding mismatch)"
+    assert "Café" in body and "naïve" in body
+    assert "“curly quotes”" in body
+    assert "Ã" not in body, "mojibake: UTF-8 bytes decoded as cp1252/latin-1"
+
+
+def test_non_ascii_is_findable(tmp_path):
+    _root, cfg = _repo(tmp_path, "", {"cafe.md": "# Café\n\nnaïve résumé prose\n"})
+    index.build(tmp_path, cfg)
+    assert any(h["relpath"] == "cafe.md" for h in find.search(cfg, "résumé"))
+
+
+def test_lint_reads_non_ascii_without_mangling(tmp_path):
+    _root, cfg = _repo(tmp_path, "", {"doc.md": "# Título — ok\n\nbody\n"})
+    findings = lint.lint(tmp_path, cfg)
+    assert not any(f["check"] == "no-heading" for f in findings)

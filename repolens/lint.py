@@ -64,7 +64,7 @@ def lint(root, config: dict, stale_days: int = 180) -> list[dict]:
 
     for p in files:
         try:
-            text = p.read_text(errors="ignore")
+            text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         rel = str(p.relative_to(root))

@@ -37,7 +37,7 @@ CLASSES = ("exact", "conceptual", "paraphrase")
 # ═══════════════════════════════════════════════════════════════
 def load_gold(path: str | pathlib.Path) -> list[dict]:
     items: list[dict] = []
-    for lineno, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
+    for lineno, line in enumerate(pathlib.Path(path).read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line:
             continue
