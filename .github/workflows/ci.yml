@@ -34,3 +34,26 @@ jobs:
         run: mypy repolens/
       - name: Test (pytest)
         run: pytest -q
+
+      # The steps above use `pip install -e .` — an EDITABLE install, which points
+      # Python at the source folder. That proves the CODE works here; it cannot
+      # prove the built WHEEL does, because no wheel exists. This step closes that
+      # gap: build the real artifact, install it into a clean venv, and run it.
+      - name: Wheel builds, installs, and runs
+        shell: bash # Windows runners default to PowerShell; force one syntax
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet build
+          python -m build --wheel --outdir dist_check
+
+          VENV="$PWD/.wheelenv"
+          python -m venv "$VENV"
+          # venv layout differs by platform: Scripts/ on Windows, bin/ elsewhere
+          if [ "$RUNNER_OS" = "Windows" ]; then VBIN="$VENV/Scripts"; else VBIN="$VENV/bin"; fi
+          "$VBIN/python" -m pip install --quiet dist_check/*.whl
+
+          # Run from OUTSIDE the repo. Inside it, `import repolens` resolves to the
+          # local source folder and the check would pass while proving nothing.
+          cd "$RUNNER_TEMP"
+          "$VBIN/python" -c "import repolens; print('import OK:', repolens.__version__)"
+          "$VBIN/repolens" --version

@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 dist/
+# CI packaging check (workflow: 'Wheel builds, installs, and runs')
+dist_check/
+.wheelenv/
 build/
 *.egg-info/
 .pytest_cache/
