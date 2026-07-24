@@ -90,9 +90,9 @@ DEFAULT_SEMANTIC = {
 DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 __all__ = [
+    "CONFIG_NAME",
     "find_root",
     "load_config",
-    "CONFIG_NAME",
 ]
 
 

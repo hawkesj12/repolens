@@ -31,11 +31,11 @@ import sqlite3
 import sys
 
 __all__ = [
-    "available",
     "active_path",
-    "ensure_schema",
-    "embed_doc",
+    "available",
     "delete_doc",
+    "embed_doc",
+    "ensure_schema",
     "knn",
 ]
 
@@ -294,7 +294,7 @@ def _model(config: dict):
                 from loguru import logger
 
                 logger.disable("fastembed")
-            except Exception:  # noqa: BLE001 — quieting is optional, never fatal
+            except (ImportError, AttributeError):  # quieting is optional, never fatal
                 pass
             cache = _cache_dir()
             os.makedirs(cache, exist_ok=True)
@@ -303,7 +303,9 @@ def _model(config: dict):
                 print(f"ℹ semantic: model cache at {cache}", file=sys.stderr)
             threads = int(config["semantic"].get("threads", 0)) or None
             _MODELS[name] = _load_with_timeout(name, threads, cache)
-        except Exception as e:  # noqa: BLE001 — memoize + PERSIST the failure, degrade
+        # Any load failure at all is caught on purpose: memoize + PERSIST it, degrade
+        # to lexical-only rather than letting a bad model take down `find`.
+        except Exception as e:
             _MODEL_LOAD_FAILED = True
             _write_sentinel()  # so sibling processes degrade instead of re-hanging
             print(

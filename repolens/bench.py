@@ -22,9 +22,8 @@ import json
 import pathlib
 import random
 
-from . import find
+from . import find, semantic
 from . import index as _index
-from . import semantic
 
 CLASSES = ("exact", "conceptual", "paraphrase")
 

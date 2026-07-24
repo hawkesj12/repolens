@@ -216,7 +216,7 @@ def _insert_doc(
         if max_bytes and p.stat().st_size > max_bytes:
             return False  # too large — skip (see max_file_bytes)
         text = p.read_text(errors="ignore")
-    except Exception:
+    except OSError:
         return False
     if is_code:
         pl = purpose.extract_purpose(rel, text)

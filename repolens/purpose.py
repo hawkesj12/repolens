@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["extract_purpose", "extract_doc", "MAX_LEN", "DOC_MAX_CHARS"]
+__all__ = ["DOC_MAX_CHARS", "MAX_LEN", "extract_doc", "extract_purpose"]
 
 MAX_LEN = 200  # a purpose line is a hint, not a paragraph
 DOC_MAX_CHARS = (
@@ -40,7 +40,7 @@ def _markdown_purpose(text: str) -> str:
         if end != -1:
             body = body[body.find("\n", end + 1) + 1 :]
 
-    m = re.search(r"^\*\*What this is:?\*\*\s*(.+)$", body, re.M)
+    m = re.search(r"^\*\*What this is:?\*\*\s*(.+)$", body, re.MULTILINE)
     if m:
         return _first_sentence(m.group(1))
 
@@ -79,14 +79,14 @@ def _comment_purpose(
         if head.startswith("#!"):
             head = head.split("\n", 1)[1] if "\n" in head else ""
         head = head.lstrip("\n \t")
-        m = re.match(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, re.S)
+        m = re.match(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, re.DOTALL)
         if m and m.group(1).strip():
             return _first_sentence(m.group(1).strip().splitlines()[0])
     for raw in text.splitlines():
         s = raw.strip()
         if not s or s.startswith("#!"):
             continue
-        if s.startswith("/**") or s.startswith("/*"):
+        if s.startswith(("/**", "/*")):
             s = s.lstrip("/*").strip()
             if s and re.search(r"[A-Za-z]", s):
                 return _first_sentence(s)
@@ -124,7 +124,7 @@ def _comment_block(text: str, markers: tuple[str, ...], docstring: bool = False)
         if head.startswith("#!"):
             head = head.split("\n", 1)[1] if "\n" in head else ""
         head = head.lstrip("\n \t")
-        m = re.match(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, re.S)
+        m = re.match(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', head, re.DOTALL)
         if m and m.group(1).strip():
             return m.group(1).strip()
     out: list[str] = []

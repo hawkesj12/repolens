@@ -182,7 +182,7 @@ def test_build_atomic_single_docs_table(tmp_path):
     _root, cfg = _repo(
         tmp_path, "", {"a.md": "# A\n\nhello world\n", "s.py": '"""does a thing."""\n'}
     )
-    n, code, tables, ms = index.build(tmp_path, cfg)
+    n, code, _tables, _ms = index.build(tmp_path, cfg)
     assert n >= 1 and code >= 1
     assert not list((tmp_path / ".repolens").glob("*.tmp-*"))
     con = sqlite3.connect(cfg["index_path"])
@@ -611,7 +611,7 @@ def test_incremental_reconciles_delete(tmp_path):
     )
     index.build(tmp_path, cfg)
     (tmp_path / "b.md").unlink()
-    changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
+    _changed, deleted, _ms = index.build_incremental(tmp_path, cfg)
     assert deleted == 1
     assert not any(h["relpath"] == "b.md" for h in find.search(cfg, "beta"))
     con = sqlite3.connect(cfg["index_path"])
@@ -624,7 +624,7 @@ def test_rebuild_full_still_works(tmp_path):
     index.build(tmp_path, cfg)
     (tmp_path / "a.md").write_text("# A\n\nalpha delta\n")
     index.build_incremental(tmp_path, cfg)
-    n, code, _t, _ms = index.build(tmp_path, cfg)  # full rebuild parity
+    n, _code, _t, _ms = index.build(tmp_path, cfg)  # full rebuild parity
     assert n == 1
     assert any(h["relpath"] == "a.md" for h in find.search(cfg, "delta"))
 
@@ -734,9 +734,7 @@ def test_chunk_fenced_code_comments_are_not_headings():
     # heading detection resumed after the closing fence
     assert any(c.startswith("## Second heading") for c in chunks)
     # and the fake headings never started a section
-    assert not any(
-        c.startswith("# not a heading") or c.startswith("## also not") for c in chunks
-    )
+    assert not any(c.startswith(("# not a heading", "## also not")) for c in chunks)
 
 
 def test_chunk_never_exceeds_cap():
@@ -836,7 +834,7 @@ def test_http_provider_available_needs_endpoint(monkeypatch):
     monkeypatch.undo()
     try:
         import numpy  # noqa: F401
-    except Exception:
+    except ImportError:
         pytest.skip("numpy not installed")
     cfg_no = {"semantic": {"provider": "http", "endpoint": ""}}
     cfg_yes = {"semantic": {"provider": "http", "endpoint": "http://x/v1/embeddings"}}
@@ -986,7 +984,9 @@ def test_available_does_not_import_fastembed():
         "assert 'fastembed' not in sys.modules, 'available() imported fastembed';"
         "print('OK')"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
     assert out.returncode == 0, out.stderr
     assert "OK" in out.stdout
 
@@ -1186,7 +1186,7 @@ def test_incremental_skips_candidate_a_peer_already_committed(tmp_path):
     con.execute("UPDATE files SET hash=?, mtime=0 WHERE relpath='a.md'", (new_hash,))
     con.commit()
     con.close()
-    changed, deleted, _ = index.build_incremental(tmp_path, cfg)
+    changed, _deleted, _ = index.build_incremental(tmp_path, cfg)
     assert changed == 0  # re-check matched the peer's hash → no redundant re-embed
 
 

@@ -19,7 +19,7 @@ _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]")
 _MDLINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)]+)\)")
 _HEADING = re.compile(r"^#{1,6}\s+\S")
 
-__all__ = ["lint", "has_errors"]
+__all__ = ["has_errors", "lint"]
 
 
 def _slug(s: str) -> str:
@@ -65,7 +65,7 @@ def lint(root, config: dict, stale_days: int = 180) -> list[dict]:
     for p in files:
         try:
             text = p.read_text(errors="ignore")
-        except Exception:
+        except OSError:
             continue
         rel = str(p.relative_to(root))
         stripped = text.strip()

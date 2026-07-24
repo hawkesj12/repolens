@@ -62,7 +62,7 @@ def _frontmatter_type(text: str) -> str | None:
     end = text.find("\n---", 3)
     if end == -1:
         return None
-    m = re.search(r"^type:\s*(.+)$", text[3:end], re.M)
+    m = re.search(r"^type:\s*(.+)$", text[3:end], re.MULTILINE)
     return m.group(1).strip() if m else None
 
 
@@ -99,7 +99,7 @@ def validate_doc(
     findings: list[tuple[str, str, str]] = []
     for pattern in spec.get("require", []):
         try:
-            if not re.search(pattern, text, re.M):
+            if not re.search(pattern, text, re.MULTILINE):
                 findings.append(
                     (
                         "warn",

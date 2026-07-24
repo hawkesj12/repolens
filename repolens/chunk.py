@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["chunk_document", "CHARS_PER_TOKEN"]
+__all__ = ["CHARS_PER_TOKEN", "chunk_document"]
 
 # ~4 characters per token is the standard English rule-of-thumb; good enough to size
 # chunks under the model context (and the per-section cap) without a real tokenizer.

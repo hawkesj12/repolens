@@ -36,5 +36,7 @@ def event(config: dict, kind: str, **fields) -> None:
         }
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001 — logging must never break find/embed
+    # A bad log path (OSError) or an unserializable field (TypeError/ValueError)
+    # must never take down the find/embed it was only observing.
+    except (OSError, TypeError, ValueError):
         pass
