@@ -8,40 +8,34 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- **Errors are no longer swallowed indiscriminately.** Several `except Exception:`
-  handlers caught every possible failure and moved on silently. Each now catches only what
-  can actually occur there — `OSError` when reading a file, `(OSError, TypeError,
-ValueError)` when writing the optional event log, `(ImportError, AttributeError)` when
-  quieting the embedder's logging. Anything unexpected now surfaces instead of hiding.
-  The model-load handler still catches broadly on purpose: its job is to degrade to
-  lexical-only search rather than let a bad model break `find`.
+- **Windows: repolens now actually works.** Three bugs made it unusable there, all
+  silent — no error, just wrong results:
+  - **Indexing produced an EMPTY index** inside any git repo. Repo-relative paths were
+    compared against `git ls-files` output (always forward-slashed) using Windows'
+    backslash form, so every file looked ignored. `init` reported success and indexed
+    nothing.
+  - **`repolens find` crashed** with a `UnicodeEncodeError` instead of printing results
+    — the box-drawing character used to show the matching passage has no equivalent in
+    the Windows console's default code page.
+  - **Documents with non-ASCII text were mangled.** Text was read using the system
+    locale rather than UTF-8, so em-dashes and curly quotes were silently corrupted.
+  - `repolens init` also wrote an invalid `paths = ["data\app.db"]` into the config,
+    where `\a` is a TOML escape sequence.
 
-- **Windows: repo-relative paths are now always stored in posix form.** They are
-  identifiers — written into the index, into `repolens.toml`, and compared against
-  `git ls-files` output, which is always forward-slashed. On Windows the native
-  separator leaked in, so stored keys stopped matching (frontmatter lookups silently
-  returned nothing), `repolens init` wrote `paths = ["data\app.db"]` into TOML where
-  `\a` is an escape sequence, and — worst — every file compared unequal to the
-  gitignore allowlist, so **indexing inside a git repo produced an empty index.**
-- **Windows: `repolens find` no longer crashes on the console.** Output goes through
-  the system code page there (usually cp1252), which has no byte for the box-drawing
-  `│` used to show the matching passage — so `find` died with a `UnicodeEncodeError`
-  instead of printing results. The CLI now sets stdout/stderr to UTF-8. Note the
-  asymmetry: *reading* cp1252 never raises (it maps all 256 bytes and mojibakes
-  silently), but *writing* an unmappable character does.
-- **Windows: text I/O is explicitly UTF-8.** Python defaults text reads to the system
-  locale there (usually cp1252), which maps all 256 bytes and so never raises — it
-  silently mojibakes. Indexing a document containing an em-dash or curly quotes stored
-  mangled text with no error.
+  **If you use repolens on Windows, upgrade.** Linux and macOS were unaffected.
 
-### Changed
+- **Unexpected errors surface instead of hiding.** Several handlers caught every
+  possible failure and continued silently; each now catches only what can actually occur
+  there. A genuine problem is now visible rather than swallowed. (Model loading still
+  degrades quietly to lexical-only search on purpose — that one is by design.)
 
-- **CI now pins its own tools.** The test matrix installed `ruff`, `pytest`, and `mypy`
-  unpinned, so a new upstream release could turn the build red on a commit that changed
-  nothing — which is exactly what happened when ruff 0.16 enabled new rules. Versions are
-  now explicit and upgraded deliberately. No effect on the published package.
-- **CI now runs on Windows** as well as Linux and macOS (9 jobs). The two Windows bugs
-  above were found by the first run of that matrix.
+### Internal
+
+- CI pins its own tool versions, so a new upstream release can't turn the build red on a
+  commit that changed nothing.
+- CI now runs on Windows alongside Linux and macOS (9 jobs), and additionally installs
+  the built wheel into a clean environment and runs a full `init` → `index` → `find`
+  end-to-end. The Windows bugs above were found by the first run of that matrix.
 
 ## [0.13.1] - 2026-07-23
 
