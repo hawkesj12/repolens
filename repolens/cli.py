@@ -250,10 +250,16 @@ def cmd_lint(args) -> int:
 # ═══════════════════════════════════════════════════════════════
 def _utf8_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
+        # getattr, not a direct call: the typeshed stub for sys.stdout is TextIO,
+        # which declares no reconfigure() even though TextIOWrapper has it — and a
+        # redirected stream (pytest capture, a pipe wrapper) may genuinely lack it.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, ValueError, OSError):
-            pass  # redirected/replaced stream — never break the CLI over output config
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass  # never break the CLI over output configuration
 
 
 def main(argv=None) -> int:
