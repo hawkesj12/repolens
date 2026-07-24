@@ -39,7 +39,7 @@ jobs:
       # Python at the source folder. That proves the CODE works here; it cannot
       # prove the built WHEEL does, because no wheel exists. This step closes that
       # gap: build the real artifact, install it into a clean venv, and run it.
-      - name: Wheel builds, installs, and runs
+      - name: Wheel installs and works end-to-end
         shell: bash # Windows runners default to PowerShell; force one syntax
         run: |
           set -euo pipefail
@@ -57,3 +57,33 @@ jobs:
           cd "$RUNNER_TEMP"
           "$VBIN/python" -c "import repolens; print('import OK:', repolens.__version__)"
           "$VBIN/repolens" --version
+
+          # ── End-to-end: init a REAL git repo and use it ───────────────────
+          # A real git repo on purpose. `_walk` filters against `git ls-files`
+          # output, which is always forward-slashed — the bug where Windows
+          # skipped every file and built an EMPTY index lives only on this path,
+          # and the unit tests can't reach it because tmp_path isn't a git repo.
+          # REPOLENS_MODEL_LOAD_TIMEOUT=1 forces lexical-only so CI doesn't
+          # download an embedding model on every job (and exercises the
+          # graceful-degrade path for free).
+          export REPOLENS_MODEL_LOAD_TIMEOUT=1
+          mkdir -p demo && cd demo
+          git init -q && git config user.email ci@example.com && git config user.name ci
+          mkdir -p docs
+          printf '# Widget Guide\n\nHow to configure the widget — em-dash.\n' > docs/guide.md
+          printf '"""Handles widget configuration."""\n' > widget.py
+
+          "$VBIN/repolens" init
+
+          test -s .claude/rules/repolens.md || { echo "FAIL: agent routing rule not written"; exit 1; }
+          test -s .repolens.toml            || { echo "FAIL: .repolens.toml not written"; exit 1; }
+          grep -q '\\' .repolens.toml       && { echo "FAIL: native separator in config"; exit 1; }
+          grep -q '\.repolens/' .gitignore  || { echo "FAIL: .repolens/ not gitignored"; exit 1; }
+
+          N=$("$VBIN/python" -c "import sqlite3;print(sqlite3.connect('.repolens/index.db').execute('SELECT count(*) FROM docs').fetchone()[0])")
+          [ "$N" -ge 2 ] || { echo "FAIL: index has $N entries — gitignore allowlist mismatch"; exit 1; }
+
+          "$VBIN/repolens" find "configure the widget" | grep -q 'docs/guide.md' \
+            || { echo "FAIL: find did not locate docs/guide.md"; exit 1; }
+
+          echo "end-to-end OK: rule written, $N indexed, find works"
