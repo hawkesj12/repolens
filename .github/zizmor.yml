@@ -1,0 +1,22 @@
+rules:
+  unpinned-uses:
+    config:
+      # zizmor v1.20.0+ defaults to a blanket hash-pin policy: every action must
+      # be pinned to a SHA. That default is right, and everything third-party
+      # here obeys it.
+      #
+      # My own repos are the one exception, and it is a deliberate one. The audit
+      # workflow lives in hawkesj12/workflows and is pinned to a version TAG so
+      # Dependabot can bump it (its github-actions ecosystem covers reusable-
+      # workflow refs; a SHA works too, but a tag is what makes the release
+      # legible in a diff). The threat hash-pinning defends against — someone
+      # else repointing a ref out from under me — does not apply to a repo I
+      # control and gate with its own required checks.
+      #
+      # Stated as a policy rather than a per-line `# zizmor: ignore` comment so
+      # the reasoning lives in one place instead of being re-argued at each call
+      # site, and so a NEW unpinned third-party action can never be waved through
+      # by an inherited suppression.
+      policies:
+        "hawkesj12/*": ref-pin
+        "*": hash-pin
