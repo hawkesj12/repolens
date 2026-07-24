@@ -6,6 +6,12 @@ name: Audit
 # mechanism, and no invocation is required.
 #
 # The checks themselves live in hawkesj12/workflows so every repo shares one copy.
+#
+# The CVE check reads a LOCKFILE, which is why uv.lock is committed even though
+# this is a library that ships loose ranges. Without one, osv-scanner finds no
+# package sources and the job passes having examined nothing — a green shield
+# that reads as "no CVEs" when it means "nothing was scanned". The lock pins the
+# resolution CI audits, not what users get on `pip install`.
 
 on:
   schedule:
