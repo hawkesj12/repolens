@@ -8,6 +8,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      # Don't take a brand-new release the instant it publishes. A compromised
+      # version is usually caught within days; waiting a week means the ecosystem
+      # notices before you adopt it. (zizmor: dependabot-cooldown)
+      default-days: 7
     commit-message:
       prefix: "ci"
     groups:
@@ -22,6 +27,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      # Don't take a brand-new release the instant it publishes. A compromised
+      # version is usually caught within days; waiting a week means the ecosystem
+      # notices before you adopt it. (zizmor: dependabot-cooldown)
+      default-days: 7
     commit-message:
       prefix: "deps"
     groups:
