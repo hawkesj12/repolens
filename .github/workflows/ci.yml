@@ -112,17 +112,82 @@ jobs:
 
           echo "end-to-end OK: rule written, $N indexed, find works"
 
-  # One stable check for the branch ruleset to require. Requiring the 9 matrix
-  # jobs by name ("test (ubuntu-latest, 3.11)", …) breaks the moment the matrix
-  # changes; this collapses them into a single gate that survives that.
-  # `if: always()` is load-bearing: without it this job is SKIPPED when `test`
-  # fails, and a skipped required check does not read as a failure.
-  ci-ok:
-    if: always()
-    needs: test
+  # The flagship tier, actually exercised. The matrix above forces lexical-only
+  # (REPOLENS_MODEL_LOAD_TIMEOUT=1), and every semantic unit test mocks the
+  # embedder — so hybrid search could be completely broken and all 9 jobs stay
+  # green. This one job loads the REAL model and proves the dense half works,
+  # using the repo's own gold set: the `paraphrase` queries share no vocabulary
+  # with their target files, so lexical recall on them is 0% and only a working
+  # embedder reaches them. A dead embedder collapses hybrid to lexical and this
+  # job goes red. One ubuntu/3.12 job, not the matrix — the model downloads once.
+  semantic:
     runs-on: ubuntu-latest
     steps:
-      - name: All matrix jobs must have succeeded
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # The ~200MB embedding model is the expensive part; cache it across runs.
+      # Keyed on the model name so a default-model change invalidates the cache.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/repolens
+          key: repolens-model-bge-base-en-v1.5
+
+      - name: Install (real semantic stack, no editable)
+        run: pip install .
+
+      # No REPOLENS_CACHE_DIR override: it is used verbatim (no ~ expansion), so
+      # a "~/…" value would create a literal "~" dir and miss the cache above.
+      # repolens' default is ~/.cache/repolens/fastembed (properly expanded),
+      # which is exactly what the cache step keyed on.
+      - name: Prove the dense tier actually embeds and retrieves
         run: |
-          echo "test result: ${{ needs.test.result }}"
+          set -euo pipefail
+
+          # Rebuild the index with the model live. `2>&1 | tee` so a silent
+          # degrade (embed skipped / deps unavailable / model failed) is caught
+          # here, not swallowed — the exact false-green the matrix can't see.
+          repolens index --rebuild 2>&1 | tee build.log
+          if grep -qiE 'embed skipped|deps unavailable|model failed to load|semantic tier not available' build.log; then
+            echo "FAIL: the embedder did not run — hybrid degraded to lexical"
+            exit 1
+          fi
+
+          # The repo's own gold set is the assertion. paraphrase queries have 0%
+          # lexical recall by construction; a working embedder makes them ~100%.
+          repolens bench --json > bench.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("bench.json"))
+          para = d["classes"]["paraphrase"]
+          ov = d["overall"]
+          lex_r, hyb_r = para["lexical"]["recall"], para["hybrid"]["recall"]
+          lex_m, hyb_m = ov["lexical"]["mrr"], ov["hybrid"]["mrr"]
+          print(f"paraphrase recall — lexical {lex_r:.0%}, hybrid {hyb_r:.0%}")
+          print(f"overall MRR       — lexical {lex_m:.3f}, hybrid {hyb_m:.3f}")
+          # Live model measured 100% here; a dead one gives 0% (== lexical).
+          assert hyb_r >= 0.80, f"hybrid paraphrase recall {hyb_r:.0%} < 80% — dense tier not working"
+          assert hyb_m > lex_m + 0.05, f"hybrid MRR {hyb_m:.3f} not meaningfully above lexical {lex_m:.3f}"
+          print("OK: the dense tier embeds and retrieves what lexical cannot")
+          PY
+
+  # One stable check for the branch ruleset to require. Requiring the matrix
+  # jobs by name ("test (ubuntu-latest, 3.11)", …) breaks the moment the matrix
+  # changes; this collapses them into a single gate that survives that.
+  # `if: always()` is load-bearing: without it this job is SKIPPED when a
+  # dependency fails, and a skipped required check does not read as a failure.
+  ci-ok:
+    if: always()
+    needs: [test, semantic]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs must have succeeded
+        run: |
+          echo "test=${{ needs.test.result }} semantic=${{ needs.semantic.result }}"
           [ "${{ needs.test.result }}" = "success" ] || exit 1
+          [ "${{ needs.semantic.result }}" = "success" ] || exit 1
