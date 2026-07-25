@@ -33,9 +33,14 @@ All notable changes to this project are documented here. The format follows
 
 - CI pins its own tool versions, so a new upstream release can't turn the build red on a
   commit that changed nothing.
-- CI now runs on Windows alongside Linux and macOS (9 jobs), and additionally installs
-  the built wheel into a clean environment and runs a full `init` → `index` → `find`
-  end-to-end. The Windows bugs above were found by the first run of that matrix.
+- CI now runs on Windows alongside Linux and macOS (9 combinations), and each installs the
+  built wheel into a clean environment and runs a real `init` → `find` end-to-end. The
+  Windows bugs above were found by the first run of that matrix.
+- A dedicated CI job now loads the real embedding model and asserts hybrid search retrieves
+  what lexical alone cannot, so the flagship tier can no longer break silently — the matrix
+  forces lexical-only and every semantic unit test mocks the embedder.
+- Refreshed the README benchmark table to numbers that reproduce at HEAD (an earlier
+  embedding-prefix change had left them stale). The conclusions are unchanged.
 
 ## [0.13.1] - 2026-07-23
 

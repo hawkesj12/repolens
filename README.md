@@ -90,7 +90,7 @@ So the guidance is about the _provider_, not a quality gap:
 - **Zero-config → `fastembed` + `bge-base-en-v1.5`** (the default). Competitive quality, nothing to install; CPU-slow to build, reloads per query. Fine for a small or one-shot repo.
 - **Query-heavy / agent use → Ollama + `mxbai-embed-large`.** Top conceptual score (tied), English-specialized (no wasted multilingual capacity), resident on the GPU. Set `provider = "http"` + the model's `query_prefix`.
 
-The gold set + `repolens bench --set <gold>` reproduce every row.
+Unlike the first table, this corpus and its 30-query gold set aren't in the repo — so read these rows as a directional finding, not something you can re-run here. (The first table's set, `benchmarks/acceptance.jsonl`, _is_ shipped: `repolens bench --set <gold>` reproduces it.)
 
 ## Who it's for
 
@@ -118,7 +118,7 @@ pipx install repolens-search   # PyPI package name; the command it installs is `
 
 Requires Python 3.11+. repolens depends on `fastembed` (ONNX embeddings, no PyTorch/CUDA/service), `sqlite-vec`, and `numpy` — all CPU-only, no service. (`fastembed` pulls `onnxruntime`, a prebuilt binary; on the rare platform where that won't install, repolens still runs lexical-only.)
 
-**Tested on Linux, macOS, and Windows** against Python 3.11, 3.12, and 3.13 — every push runs all nine combinations, and each one installs the built wheel into a clean environment and does a real `init` → `index` → `find` before it can go green.
+**Tested on Linux, macOS, and Windows** against Python 3.11, 3.12, and 3.13. Every pull request and every push to `main` runs all nine combinations — each installs the built wheel into a clean environment and does a real `init` → `find` — plus a dedicated job that loads the actual embedding model and asserts hybrid search retrieves what lexical alone cannot, so the flagship tier can't silently break.
 
 > **First run has a one-time cost.** The first index build **embeds your whole corpus** — fastembed downloads the model (`BAAI/bge-base-en-v1.5`, ~0.2 GB) once (cached under `~/.cache/repolens`, override with `REPOLENS_CACHE_DIR`), then embeds every doc's chunks on CPU. Budget **roughly a few seconds per document** (a few hundred large markdown files can take several minutes). It's throttled by default (`[semantic].threads = 2`) so it won't max your machine — raise it (`repolens index --threads 0` for all cores, or set `[semantic].threads`) for a faster one-off rebuild. After that it's incremental — only _changed_ files re-embed, so day-to-day use is instant. Prefer no model? Set `[semantic].enabled = false` for lexical-only (BM25). On a build without loadable-extension support (`sqlite3` is compiled without it on some platforms — notably stock macOS), repolens automatically falls back from `sqlite-vec` to a numpy brute-force vector search; it announces which path is active.
 
