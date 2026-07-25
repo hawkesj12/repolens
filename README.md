@@ -195,7 +195,7 @@ A `find` event records the query, mode, the matched **file paths + scores**, and
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Next: a cross-encoder reranker over the fused top-N, then `llms.txt` export.
+Next: a cross-encoder reranker over the fused top-N, then `llms.txt` export.
 
 ## License
 
