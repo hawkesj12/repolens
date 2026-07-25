@@ -1,19 +1,23 @@
 name: Release
 
-# The TAG is the trigger. Pushing v1.2.3 builds from that exact commit and
-# publishes it — so the artifact on PyPI is provably the tagged source, not
-# whatever happened to be on a laptop.
+# TWO ways in, by design:
+#   • push a v* TAG   → publish to REAL PyPI + cut a GitHub Release (production).
+#   • run manually    → publish to TestPyPI only, no GitHub Release (a rehearsal).
+# A manual run can NEVER reach real PyPI — production is tag-only — so the
+# rehearsal is safe to fire anytime, and it exercises the same build → version →
+# twine → publish spine the tag path uses.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
-  # Re-run the full suite on the tagged commit. `ci.yml` triggers on push-to-main
-  # and pull_request, neither of which fires for a tag — so without this job a
-  # release would publish having run no tests at all.
+  # Re-run the full suite on the commit being released. `ci.yml` triggers on
+  # push-to-main and pull_request, neither of which fires for a tag — so without
+  # this job a release would publish having run no tests at all.
   test:
     uses: ./.github/workflows/ci.yml
 
@@ -29,22 +33,22 @@ jobs:
           python-version: "3.12"
 
       - name: Build sdist + wheel
-        # --no-sources: build without tool.uv.sources, matching what other build
-        # frontends see. Astral recommends it specifically for publishing.
         run: |
           python -m pip install --upgrade pip build
           python -m build --sdist --wheel --outdir dist
 
       - name: Verify the tag matches the packaged version
-        # A tag of v0.13.2 that ships 0.13.1 is unrecoverable once published,
-        # because a PyPI version can never be replaced. Catch it here.
+        # Tag runs only. A tag of v0.13.2 that ships 0.13.1 is unrecoverable once
+        # published, because a PyPI version can never be replaced. A manual
+        # rehearsal has no tag, so this check is skipped there.
+        if: github.event_name == 'push'
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG="$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")"
           echo "tag=$TAG  pyproject=$PKG"
           [ "$TAG" = "$PKG" ] || { echo "MISMATCH: tag $TAG != pyproject $PKG"; exit 1; }
 
-      - name: Check metadata renders on PyPI
+      - name: Check metadata renders on the index
         run: |
           python -m pip install --upgrade twine
           twine check dist/*
@@ -57,15 +61,14 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # A GitHub Environment lets you require your own approval before the
-    # irreversible step, and scopes the OIDC identity PyPI trusts.
-    environment: pypi
+    # Tag → the `pypi` environment (real index); manual → `testpypi`. The
+    # environment name must match the Trusted Publisher registered on each index.
+    environment: ${{ github.event_name == 'push' && 'pypi' || 'testpypi' }}
     permissions:
-      # REQUIRED for Trusted Publishing: mints the short-lived OIDC token PyPI
-      # exchanges for a 15-minute, project-scoped upload token. No stored secret.
-      # Attestations (PEP 740) are produced by default under Trusted Publishing
-      # and ride this same identity — PyPI REJECTS them from any other identity,
-      # so publishing from a laptop token cannot produce provenance at all.
+      # REQUIRED for Trusted Publishing: mints the short-lived OIDC token the
+      # index exchanges for a 15-minute, project-scoped upload token. No stored
+      # secret. Attestations (PEP 740) are produced by default under Trusted
+      # Publishing and ride this same identity.
       id-token: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -73,9 +76,15 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          # Empty string → the action's default (real PyPI). On a manual rehearsal,
+          # point it at TestPyPI so production is only ever reached via a tag.
+          repository-url: ${{ github.event_name == 'push' && '' || 'https://test.pypi.org/legacy/' }}
 
+  # Tag runs only — a rehearsal must not cut a public Release.
   github-release:
     needs: publish
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write # creating a Release writes to the repo
@@ -88,7 +97,7 @@ jobs:
           name: dist
           path: dist/
       - name: Create the GitHub Release from the changelog
-        # pypa/gh-action-pypi-publish publishes to PyPI and nothing else —
+        # pypa/gh-action-pypi-publish publishes to the index and nothing else —
         # creating a Release is explicitly outside its scope, so it happens here.
         env:
           GH_TOKEN: ${{ github.token }}
