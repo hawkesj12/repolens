@@ -61,14 +61,11 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # No GitHub environment on purpose. PyPI's trusted-publisher matcher compares the
-    # environment claim WITHOUT stripping whitespace (warehouse _check_environment:
-    # case-insensitive `.lower()` but no `.strip()`), so an invisible space in the
-    # publisher's environment field — which is not readable via any API — silently
-    # breaks matching. With no environment set here, the OIDC token carries no
-    # environment claim, and a publisher whose environment field is left truly empty
-    # ("" hits the matcher's short-circuit) matches unconditionally. We use no
-    # environment protection rules, so nothing is lost.
+    # The GitHub environment gates which trusted publisher the OIDC token maps to:
+    #   push (tag) → 'pypi'      → the real-PyPI publisher (registered with env Any/empty, so it matches)
+    #   dispatch   → 'testpypi'  → the TestPyPI publisher (registered with env 'testpypi')
+    # Safe from the ternary trap below because BOTH values are non-empty (truthy).
+    environment: ${{ github.event_name == 'push' && 'pypi' || 'testpypi' }}
     permissions:
       # REQUIRED for Trusted Publishing: mints the short-lived OIDC token the
       # index exchanges for a 15-minute, project-scoped upload token. No stored
@@ -82,9 +79,13 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         with:
-          # Empty string → the action's default (real PyPI). On a manual rehearsal,
-          # point it at TestPyPI so production is only ever reached via a tag.
-          repository-url: ${{ github.event_name == 'push' && '' || 'https://test.pypi.org/legacy/' }}
+          # GitHub Actions has no real ternary — `A && B || C` only works when B is
+          # TRUTHY. An empty string is FALSY, so `event=='push' && '' || testpypi`
+          # ALWAYS fell through to TestPyPI, even on a tag (this misrouted every real
+          # release to TestPyPI for a day). Fix: put the non-empty value on the true
+          # side. On a tag push this is false → falls through to '' → the action's
+          # default (real PyPI); a manual rehearsal is true → TestPyPI.
+          repository-url: ${{ github.event_name != 'push' && 'https://test.pypi.org/legacy/' || '' }}
 
   # Tag runs only — a rehearsal must not cut a public Release.
   github-release:
