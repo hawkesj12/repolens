@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["CHARS_PER_TOKEN", "chunk_document"]
+__all__ = ["CHARS_PER_TOKEN", "chunk_document", "first_heading"]
 
 # ~4 characters per token is the standard English rule-of-thumb; good enough to size
 # chunks under the model context (and the per-section cap) without a real tokenizer.
@@ -33,10 +33,30 @@ CHARS_PER_TOKEN = 4
 # hard fallback: split on raw char count when a single atom is still over the limit.
 _SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
 
-# A prefix heading: up to 3 leading spaces, then a run of 1–6 '#' (Markdown ATX) or
-# '=' (AsciiDoc `== Section`), then whitespace. Matches `# H`, `## SECTION: Foo`,
-# `== Git Basics` — not a bare `#`, a `#tag`, or a `======` setext underline (no space).
-_PREFIX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6}|={1,6})\s")
+# A prefix heading: up to 3 leading spaces, a run of 1–6 '#' (Markdown ATX) or '='
+# (AsciiDoc `== Section`), then a real space/tab (NOT any `\s` — `\s` matches the
+# trailing newline, so a bare `======` or a reST table border `===  ===` would slip
+# through). This is the STRUCTURAL check; _is_prefix_heading() adds the content check.
+_PREFIX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6}|={1,6})[ \t]")
+
+# A line that is ONLY heading-marker chars and horizontal whitespace — i.e. no title
+# text. A real prefix heading has words after the marker; a reST simple-table border
+# (`===  ===  =======`) or a bare setext/overline run (`======`) does not.
+_MARKER_ONLY_RE = re.compile(r"^[ \t#=]*$")
+
+
+# ═══════════════════════════════════════════════════════════════
+# _is_prefix_heading()
+# ═══════════════════════════════════════════════════════════════
+# A prefix (#/==) heading must be structurally shaped like one AND carry real
+# title text — otherwise a reST table border or a bare `======` adornment reads
+# as an AsciiDoc heading and shreds the section (the panel-found bug).
+# ═══════════════════════════════════════════════════════════════
+def _is_prefix_heading(line: str) -> bool:
+    return bool(_PREFIX_HEADING_RE.match(line)) and not _MARKER_ONLY_RE.match(
+        line.rstrip("\r\n")
+    )
+
 
 # An underline heading (reStructuredText, and Markdown/AsciiDoc setext): a line that is
 # ONLY a run of one punctuation char — the chars rst permits as a title adornment. It is
@@ -99,7 +119,7 @@ def _split_sections(text: str) -> list[str]:
             continue
 
         # Prefix heading (# / ==): starts a new section outright.
-        if _PREFIX_HEADING_RE.match(line):
+        if _is_prefix_heading(line):
             saw_heading = True
             flush()
             cur = [line]
@@ -114,13 +134,23 @@ def _split_sections(text: str) -> list[str]:
             if (
                 title.strip()
                 and not _UNDERLINE_RE.match(title)
-                and not _PREFIX_HEADING_RE.match(title)
+                and not _is_prefix_heading(title)
                 and len(stripped) >= len(title.strip())
             ):
                 saw_heading = True
                 cur.pop()  # the title belongs to the NEW section, not the old one
+                # reST overline+underline: a matching adornment of the SAME char
+                # directly above the title is the overline — pull it into the heading
+                # instead of orphaning it into the previous section.
+                over = []
+                if (
+                    cur
+                    and _UNDERLINE_RE.match(cur[-1])
+                    and set(cur[-1].strip()) == {stripped[0]}
+                ):
+                    over = [cur.pop()]
                 flush()
-                cur = [title, line]
+                cur = [*over, title, line]
                 continue
 
         cur.append(line)
@@ -192,6 +222,49 @@ def _merge(pieces: list[str], limit: int, overlap: int) -> list[str]:
 
 def _recursive(text: str, limit: int, overlap: int) -> list[str]:
     return _merge(_atomize(text, _SEPARATORS, limit), limit, overlap)
+
+
+# ═══════════════════════════════════════════════════════════════
+# first_heading()
+# ═══════════════════════════════════════════════════════════════
+# The first heading's TITLE text — for a doc's display title — across the
+# same three styles _split_sections detects: prefix (`#`, `==`, markers
+# stripped) and underline (rst/setext, the title is the line above the
+# adornment). Fence- and frontmatter-aware, so a `#` inside a code block or
+# a frontmatter key is never mistaken for the title. '' when the doc has
+# none. index.py and lint.py share this instead of a `#`-only scan that
+# left every .rst/.adoc file blank-titled.
+# ═══════════════════════════════════════════════════════════════
+def first_heading(text: str) -> str:
+    lines = text.splitlines()
+    in_fence = False
+    in_frontmatter = False
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if i == 0 and s == "---":
+            in_frontmatter = True
+            continue
+        if in_frontmatter:
+            if s == "---":
+                in_frontmatter = False
+            continue
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if _is_prefix_heading(line):
+            return s.lstrip("#=").strip()
+        if _UNDERLINE_RE.match(line) and i > 0:
+            prev = lines[i - 1].strip()
+            if (
+                prev
+                and not _UNDERLINE_RE.match(prev)
+                and not _is_prefix_heading(prev)
+                and len(s) >= len(prev)
+            ):
+                return prev
+    return ""
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -22,14 +22,7 @@ import subprocess
 import sys
 import time
 
-from . import frontmatter, purpose, semantic
-
-
-def _first_heading(text: str) -> str:
-    for line in text.splitlines():
-        if line.startswith("#"):
-            return line.lstrip("#").strip()
-    return ""
+from . import chunk, frontmatter, purpose, semantic
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -239,7 +232,7 @@ def _insert_doc(
         kv, block = frontmatter.parse_frontmatter(text)
         con.execute(
             "INSERT INTO docs VALUES (?,?,?,?,?)",
-            (rel, _first_heading(text), block.replace("\n", " "), text, "md"),
+            (rel, chunk.first_heading(text), block.replace("\n", " "), text, "md"),
         )
         if kv:
             con.executemany(

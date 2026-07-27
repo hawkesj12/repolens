@@ -104,6 +104,27 @@ __all__ = [
 # ═══════════════════════════════════════════════════════════════
 # find_root()
 # ═══════════════════════════════════════════════════════════════
+# _ext_list()
+# ═══════════════════════════════════════════════════════════════
+# Read an extension-list option and FAIL LOUD if it isn't a list of
+# strings. `doc_exts = "rst"` (a bare string) would otherwise iterate
+# into {'.r','.s','.t'} and silently index nothing right; `[123]` would
+# raise a bare AttributeError deeper in. The key isn't present → return
+# the known-good default set untouched.
+# ═══════════════════════════════════════════════════════════════
+def _ext_list(rl: dict, key: str, default):
+    if key not in rl:
+        return default
+    raw = rl[key]
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(e, str) for e in raw):
+        raise ValueError(
+            f"[repolens].{key} must be a list of strings "
+            f'(e.g. {key} = [".md", ".rst"]), got {raw!r}'
+        )
+    return raw
+
+
+# ═══════════════════════════════════════════════════════════════
 # Resolve the repo root: nearest ancestor of `start` (default the
 # cwd) containing .repolens.toml, else .git, else the cwd. Anchored
 # only to the user's location — NEVER __file__ (the install dir),
@@ -169,12 +190,12 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     # Never index repolens's own config file — it's tooling, not corpus, and otherwise
     # shows up as noise in the very first `find` a new user runs.
     skip_files = {CONFIG_NAME} | set(rl.get("skip_files", []))
-    code_exts = set(rl.get("code_exts", DEFAULT_CODE_EXTS))
+    code_exts = set(_ext_list(rl, "code_exts", DEFAULT_CODE_EXTS))
     # Normalise so ["rst"], [".RST"] and [".rst"] all work — the extension is compared
     # against a lowercased os.path.splitext() result at walk time.
     doc_exts = {
         (e if e.startswith(".") else "." + e).lower()
-        for e in rl.get("doc_exts", DEFAULT_DOC_EXTS)
+        for e in _ext_list(rl, "doc_exts", DEFAULT_DOC_EXTS)
     } or set(DEFAULT_DOC_EXTS)
     # Respect .gitignore by DEFAULT — the file corpus skips gitignored paths
     # unless include_gitignored is set (opt-in for personal/knowledge repos).
