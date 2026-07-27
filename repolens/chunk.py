@@ -2,8 +2,10 @@
 
 Whole-doc embedding produces wrong top-1s (a long doc's single vector matches the
 wrong sense), so the semantic layer embeds per-chunk. But a blind fixed-size window
-splits mid-thought — so the split RESPECTS structure: it breaks on Markdown heading
-boundaries first, and a chunk **never crosses a heading**. A section that fits under
+splits mid-thought — so the split RESPECTS structure: it breaks on heading boundaries
+first — across the prose formats `doc_exts` indexes: Markdown/AsciiDoc prefix headings
+(`#`, `==`) and reStructuredText / setext underline headings (`Title` over `=====`) —
+and a chunk **never crosses a heading**. A section that fits under
 `chunk_tokens` (the small ~512-token target that bge-base and other short-passage
 retrievers are built for) is one clean chunk; a longer section is packed into
 ~512-token pieces on natural boundaries (paragraph → line → sentence → word) WITHIN
@@ -31,9 +33,16 @@ CHARS_PER_TOKEN = 4
 # hard fallback: split on raw char count when a single atom is still over the limit.
 _SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
 
-# An ATX Markdown heading: up to 3 leading spaces, 1–6 '#', then a space (CommonMark).
-# Matches `# H`, `## SECTION: Foo`, `### bar` — not a bare `#` or a `#tag`.
-_HEADING_RE = re.compile(r"^ {0,3}#{1,6}\s")
+# A prefix heading: up to 3 leading spaces, then a run of 1–6 '#' (Markdown ATX) or
+# '=' (AsciiDoc `== Section`), then whitespace. Matches `# H`, `## SECTION: Foo`,
+# `== Git Basics` — not a bare `#`, a `#tag`, or a `======` setext underline (no space).
+_PREFIX_HEADING_RE = re.compile(r"^ {0,3}(#{1,6}|={1,6})\s")
+
+# An underline heading (reStructuredText, and Markdown/AsciiDoc setext): a line that is
+# ONLY a run of one punctuation char — the chars rst permits as a title adornment. It is
+# a heading only when it sits directly under a non-blank TITLE line (checked in the loop),
+# which is what separates a real `Title\n=====` from a `---` thematic break after a blank.
+_UNDERLINE_RE = re.compile(r"""^ {0,3}([=\-~^"'#*+.:`<>_])\1+\s*$""")
 
 # A code fence (CommonMark): up to 3 leading spaces, then ``` or ~~~. `#` lines inside
 # a fenced block are code comments, not headings — the splitter must not break there.
@@ -43,32 +52,80 @@ _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 # ═══════════════════════════════════════════════════════════════
 # _split_sections()
 # ═══════════════════════════════════════════════════════════════
-# Split text into heading-delimited sections: each heading line starts
-# a new section (the heading stays with its body), and any preamble
-# before the first heading is its own section. Heading detection is
-# suspended inside ```/~~~ code fences — a `# comment` line in a fenced
-# snippet is code, and splitting there shreds the block. Returns []
-# when the doc has NO headings, signaling the recursive fallback.
+# Split text into heading-delimited sections across the prose formats
+# doc_exts indexes — Markdown, reStructuredText, AsciiDoc. Detects three
+# heading styles so .rst/.adoc are section-bounded like .md, not dumped
+# as one blind blob: prefix headings (`#` md, `==` adoc) AND underline
+# headings (`Title` over `=====`/`-----`, used by rst and md-setext).
+# Each heading starts a new section (heading stays with its body); preamble
+# before the first heading is its own section. Suspended inside ```/~~~
+# fences (a `#` comment isn't a boundary) and inside a leading `---` YAML
+# frontmatter block (its closing `---` is not a setext underline). Returns
+# [] when the doc has NO headings, signaling the recursive fallback.
 # ═══════════════════════════════════════════════════════════════
 def _split_sections(text: str) -> list[str]:
+    lines = text.splitlines(keepends=True)
     sections: list[str] = []
     cur: list[str] = []
     saw_heading = False
     in_fence = False
-    for line in text.splitlines(keepends=True):
+    in_frontmatter = False
+
+    def flush() -> None:
+        if cur and "".join(cur).strip():
+            sections.append("".join(cur))
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Leading YAML frontmatter (--- … ---) at the top of the doc: never a heading,
+        # and its closing --- must not be read as a setext underline of the last key.
+        if i == 0 and stripped == "---":
+            in_frontmatter = True
+            cur.append(line)
+            continue
+        if in_frontmatter:
+            cur.append(line)
+            if stripped == "---":
+                in_frontmatter = False
+            continue
+
         if _FENCE_RE.match(line):
             in_fence = not in_fence
             cur.append(line)
             continue
-        if not in_fence and _HEADING_RE.match(line):
-            saw_heading = True
-            if cur and "".join(cur).strip():
-                sections.append("".join(cur))
-            cur = [line]
-        else:
+        if in_fence:
             cur.append(line)
-    if cur and "".join(cur).strip():
-        sections.append("".join(cur))
+            continue
+
+        # Prefix heading (# / ==): starts a new section outright.
+        if _PREFIX_HEADING_RE.match(line):
+            saw_heading = True
+            flush()
+            cur = [line]
+            continue
+
+        # Underline heading: this line is an adornment run AND the line above it is a
+        # real title (non-blank, not itself an adornment/prefix-heading), with the
+        # adornment at least as long as the title — the reStructuredText rule, which
+        # also rejects a short `---`/`===` thematic break sitting under a text line.
+        if _UNDERLINE_RE.match(line) and cur:
+            title = cur[-1]
+            if (
+                title.strip()
+                and not _UNDERLINE_RE.match(title)
+                and not _PREFIX_HEADING_RE.match(title)
+                and len(stripped) >= len(title.strip())
+            ):
+                saw_heading = True
+                cur.pop()  # the title belongs to the NEW section, not the old one
+                flush()
+                cur = [title, line]
+                continue
+
+        cur.append(line)
+
+    flush()
     return sections if saw_heading else []
 
 

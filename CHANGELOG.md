@@ -24,6 +24,12 @@ All notable changes to this project are documented here. The format follows
   back to the default rather than indexing nothing. An extension listed in both `doc_exts`
   and `code_exts` is indexed once, as code, rather than twice.
 
+  The section-bounded chunker now understands those formats' headings too, so `.rst` and
+  `.adoc` are split per-section for embedding rather than dumped as one blind chunk:
+  AsciiDoc `== Section` prefixes and reStructuredText / Markdown-setext underline titles
+  (a line over `=====`/`-----`) join Markdown `#` headings. Setext-style Markdown headings,
+  previously missed, now split too.
+
 ### Fixed
 
 - **Windows: repolens now actually works.** Three bugs made it unusable there, all

@@ -779,6 +779,62 @@ def test_chunk_fenced_code_comments_are_not_headings():
     assert not any(c.startswith(("# not a heading", "## also not")) for c in chunks)
 
 
+def test_chunk_rst_underline_headings_section_bound():
+    # reStructuredText titles are a text line over a run of punctuation (=, -, ~ …).
+    # doc_exts indexes .rst, so the chunker must section-bound them like Markdown —
+    # otherwise a whole vendor doc lands as one blind chunk and retrieval degrades.
+    rst = (
+        "Interactive Rebase\n==================\n\nRewriting history with rebase.\n\n"
+        "Squashing Commits\n-----------------\n\nCombine commits into one.\n\n"
+        "Resolving Conflicts\n-------------------\n\nFix the same line by hand.\n"
+    )
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(rst, chunk_tokens=40)
+    ]
+    assert firsts == ["Interactive Rebase", "Squashing Commits", "Resolving Conflicts"]
+
+
+def test_chunk_asciidoc_equals_headings_section_bound():
+    # AsciiDoc (git's own docs) uses `== Section`. Treated as a prefix heading.
+    adoc = (
+        "= Git Manual\n\nWhat this covers.\n\n"
+        "== Getting Started\n\nClone and commit.\n\n"
+        "== Branching\n\nIsolate your work.\n"
+    )
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(adoc, chunk_tokens=40)
+    ]
+    assert firsts == ["= Git Manual", "== Getting Started", "== Branching"]
+
+
+def test_chunk_setext_markdown_headings_split():
+    # Bonus: Markdown setext headings (Title over ====/----) were missed before and
+    # now split too — the same underline machinery that handles rst.
+    md = "Introduction\n============\n\nWelcome.\n\nDetails\n=======\n\nThe finer points.\n"
+    firsts = [c.splitlines()[0] for _ix, c in chunk.chunk_document(md, chunk_tokens=40)]
+    assert firsts == ["Introduction", "Details"]
+
+
+def test_chunk_underline_false_positives_do_not_split():
+    # The guards that keep underline detection from shredding ordinary text:
+    # (a) a `---` thematic break after a blank line is an <hr>, not a setext underline;
+    fm = "---\ntitle: My Doc\nauthor: me\n---\n\n# Real Heading\n\nbody here\n"
+    c = chunk.chunk_document(fm, chunk_tokens=40)
+    # frontmatter is ONE preamble chunk (closing --- did not split 'author: me' off),
+    # then the real heading — exactly two chunks.
+    assert len(c) == 2 and c[0][1].startswith("---") and "author: me" in c[0][1]
+    assert c[1][1].startswith("# Real Heading")
+    # (b) a thematic break with a blank line above it is not a heading;
+    hr = "Intro paragraph.\n\n---\n\nMore text.\n"
+    assert len(chunk.chunk_document(hr, chunk_tokens=40)) == 1
+    # (c) an underline SHORTER than its title is rejected (the reStructuredText rule);
+    short = "A Very Long Section Title\n---\n\nbody\n"
+    assert len(chunk.chunk_document(short, chunk_tokens=40)) == 1
+    # (d) a Markdown table separator row must not read as an underline.
+    tbl = "text\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    assert len(chunk.chunk_document(tbl, chunk_tokens=40)) == 1
+
+
 def test_chunk_never_exceeds_cap():
     # The reproduced overshoot: a re-seeded chunk (overlap tail + next piece) must NOT
     # exceed the cap, or a model at exactly its context limit truncates the tail.
