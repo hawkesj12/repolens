@@ -90,6 +90,42 @@ def test_load_config_defaults_and_parse(tmp_path):
     assert cfg["sqlite_paths"] == []  # integration off by default
 
 
+def test_load_config_doc_exts(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["doc_exts"] == root.DEFAULT_DOC_EXTS  # default: markdown only
+    # Accepts bare, dotted and upper-case forms — all normalised to ".ext" lowercase,
+    # so a config author can't silently miss files by writing "rst" instead of ".rst".
+    _root, cfg = _repo(tmp_path, '[repolens]\ndoc_exts = ["rst", ".ADOC"]\n')
+    assert cfg["doc_exts"] == {".rst", ".adoc"}
+    # An empty list is a config mistake, not "index nothing" — fall back to the default.
+    _root, cfg = _repo(tmp_path, "[repolens]\ndoc_exts = []\n")
+    assert cfg["doc_exts"] == root.DEFAULT_DOC_EXTS
+
+
+def test_doc_exts_indexes_rst_and_adoc(tmp_path):
+    # The bug this option fixes: a repo holding reStructuredText (Python's docs) or
+    # AsciiDoc (git's own docs) indexed ZERO of them, silently — the walk hardcoded ".md".
+    r = tmp_path / "repo"
+    (r).mkdir()
+    (r / ".repolens.toml").write_text(
+        '[repolens]\ndoc_exts = [".md", ".rst", ".adoc"]\n[semantic]\nenabled = false\n'
+    )
+    (r / "a.md").write_text("# Md\n\nalpha content\n")
+    (r / "b.rst").write_text("Rst\n===\n\nalpha content\n")
+    (r / "c.adoc").write_text("= Adoc\n\nalpha content\n")
+    cfg = root.load_config(r)
+    docs, code, _tables, _ms = index.build(r, cfg)
+    assert docs == 3, "rst and adoc must index alongside md"
+
+    # And a doc ext that is ALSO a code ext indexes once, as code — not twice.
+    (r / ".repolens.toml").write_text(
+        '[repolens]\ndoc_exts = [".md"]\ncode_exts = [".md"]\n[semantic]\nenabled = false\n'
+    )
+    cfg = root.load_config(r)
+    docs, code, _tables, _ms = index.build(r, cfg)
+    assert docs == 0 and code == 1
+
+
 def test_find_root_ignores_install_dir(tmp_path, monkeypatch):
     # A dir with .git but no .repolens.toml, entered as cwd, must resolve to
     # ITSELF — never to the repolens install dir (the __file__ footgun). This

@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`doc_exts` — index prose formats other than Markdown.** The file walk hardcoded
+  `.md`, so a repo holding reStructuredText or AsciiDoc indexed **zero** of it, with no
+  error and no warning: those files were simply never walked, and the only symptom was
+  that searches quietly never matched them. Found against a corpus of downloaded vendor
+  documentation where 1,745 of 2,804 files — Python's `Doc/` (`.rst`) and git's
+  `Documentation/` (`.adoc`) — were invisible.
+
+  ```toml
+  [repolens]
+  doc_exts = [".md", ".rst", ".adoc"]   # default: [".md"]
+  ```
+
+  Values are normalised, so `"rst"`, `".rst"` and `".RST"` all work. An empty list falls
+  back to the default rather than indexing nothing. An extension listed in both `doc_exts`
+  and `code_exts` is indexed once, as code, rather than twice.
+
 ### Fixed
 
 - **Windows: repolens now actually works.** Three bugs made it unusable there, all
