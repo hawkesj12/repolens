@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-07-27
+
+### Fixed
+
+- **`repolens --version` now reports the real version.** 0.14.0 shipped reporting `0.13.1`
+  because the version lived in two places (`pyproject.toml` and a hardcoded `__version__`
+  string) and only one was bumped. `__version__` now derives from the installed package
+  metadata, so the two cannot drift again — there is a single source of truth.
+
+
 ## [0.14.0] - 2026-07-27
 
 ### Added
@@ -563,7 +573,8 @@ Hardening pass from an independent three-lens review, ahead of a PyPI release.
   off-by-default SQLite integration.
 - Stdlib-only; Python 3.11+.
 
-[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/hawkesj12/repolens/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/hawkesj12/repolens/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/hawkesj12/repolens/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/hawkesj12/repolens/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/hawkesj12/repolens/compare/v0.12.0...v0.13.0
