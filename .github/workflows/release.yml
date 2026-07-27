@@ -61,9 +61,14 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # Tag → the `pypi` environment (real index); manual → `testpypi`. The
-    # environment name must match the Trusted Publisher registered on each index.
-    environment: ${{ github.event_name == 'push' && 'pypi' || 'testpypi' }}
+    # No GitHub environment on purpose. PyPI's trusted-publisher matcher compares the
+    # environment claim WITHOUT stripping whitespace (warehouse _check_environment:
+    # case-insensitive `.lower()` but no `.strip()`), so an invisible space in the
+    # publisher's environment field — which is not readable via any API — silently
+    # breaks matching. With no environment set here, the OIDC token carries no
+    # environment claim, and a publisher whose environment field is left truly empty
+    # ("" hits the matcher's short-circuit) matches unconditionally. We use no
+    # environment protection rules, so nothing is lost.
     permissions:
       # REQUIRED for Trusted Publishing: mints the short-lived OIDC token the
       # index exchanges for a 15-minute, project-scoped upload token. No stored
