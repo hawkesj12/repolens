@@ -15,6 +15,9 @@ DEFAULT_CONFIG = """\
 # skip_dirs = ["build", "vendor"]      # ADDED to sensible defaults (.git, node_modules, ...)
 # skip_files = ["CHANGELOG.md"]
 # code_exts = [".py", ".ts", ".go"]    # override the default code-file extensions
+# doc_exts = [".md", ".rst", ".adoc"]  # prose formats indexed as DOCS (default: [".md"]).
+                                       # Set this for a repo holding reStructuredText or
+                                       # AsciiDoc — otherwise NONE of it is indexed.
 # include_gitignored = true            # index gitignored file CONTENT too (default: false —
                                        # .gitignore is respected, so secrets/.env stay out).
                                        # Turn on for a personal/knowledge repo whose notes are

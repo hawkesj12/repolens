@@ -22,14 +22,7 @@ import subprocess
 import sys
 import time
 
-from . import frontmatter, purpose, semantic
-
-
-def _first_heading(text: str) -> str:
-    for line in text.splitlines():
-        if line.startswith("#"):
-            return line.lstrip("#").strip()
-    return ""
+from . import chunk, frontmatter, purpose, semantic
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -74,12 +67,17 @@ def _not_ignored(root: pathlib.Path, config: dict):
 def _walk(root: pathlib.Path, config: dict, code: bool):
     skip_dirs, skip_files = config["skip_dirs"], config["skip_files"]
     exts = config["code_exts"]
+    docexts = config.get("doc_exts") or {".md"}
     allowed = _not_ignored(root, config)  # None = index all (see docstring)
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in skip_dirs]
         for fn in fns:
-            is_code = os.path.splitext(fn)[1].lower() in exts
-            if (code and is_code) or (not code and fn.endswith(".md")):
+            ext = os.path.splitext(fn)[1].lower()
+            is_code = ext in exts
+            # A doc ext that is ALSO a code ext indexes once, as code — otherwise the
+            # file would be walked twice and inserted under both kinds.
+            is_doc = ext in docexts and not is_code
+            if (code and is_code) or (not code and is_doc):
                 p = pathlib.Path(dp) / fn
                 if p.is_symlink():
                     continue  # never follow a symlink out of the repo (leak surface)
@@ -234,7 +232,7 @@ def _insert_doc(
         kv, block = frontmatter.parse_frontmatter(text)
         con.execute(
             "INSERT INTO docs VALUES (?,?,?,?,?)",
-            (rel, _first_heading(text), block.replace("\n", " "), text, "md"),
+            (rel, chunk.first_heading(text), block.replace("\n", " "), text, "md"),
         )
         if kv:
             con.executemany(

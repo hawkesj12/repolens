@@ -11,26 +11,18 @@ from __future__ import annotations
 import re
 import time
 
+from . import chunk, schema
 from . import index as _index
-from . import schema
 
 SEV = {"error": 0, "warn": 1, "info": 2}
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]")
 _MDLINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)]+)\)")
-_HEADING = re.compile(r"^#{1,6}\s+\S")
 
 __all__ = ["has_errors", "lint"]
 
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.strip().lower()).strip("-")
-
-
-def _first_heading(text: str) -> str:
-    for line in text.splitlines():
-        if line.startswith("#"):
-            return line.lstrip("#").strip()
-    return ""
 
 
 def _malformed_frontmatter(text: str) -> bool:
@@ -74,15 +66,17 @@ def lint(root, config: dict, stale_days: int = 180) -> list[dict]:
             add("error", "empty-file", p, "file is empty or whitespace-only")
             continue
 
-        title = _first_heading(text)
-        if not any(_HEADING.match(ln) for ln in text.splitlines()):
+        # Multi-format heading detection (Markdown/AsciiDoc/reStructuredText), shared
+        # with the index — so a headed .rst/.adoc doc isn't falsely flagged no-heading.
+        title = chunk.first_heading(text)
+        if not title:
             add(
                 "warn",
                 "no-heading",
                 p,
-                "no markdown heading — hard to identify in results",
+                "no heading — hard to identify in results",
             )
-        elif title:
+        else:
             titles.setdefault(title, []).append(rel)
 
         if _malformed_frontmatter(text):

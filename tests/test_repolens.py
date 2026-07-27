@@ -90,6 +90,67 @@ def test_load_config_defaults_and_parse(tmp_path):
     assert cfg["sqlite_paths"] == []  # integration off by default
 
 
+def test_load_config_doc_exts(tmp_path):
+    _root, cfg = _repo(tmp_path, "")
+    assert cfg["doc_exts"] == root.DEFAULT_DOC_EXTS  # default: markdown only
+    # Accepts bare, dotted and upper-case forms — all normalised to ".ext" lowercase,
+    # so a config author can't silently miss files by writing "rst" instead of ".rst".
+    _root, cfg = _repo(tmp_path, '[repolens]\ndoc_exts = ["rst", ".ADOC"]\n')
+    assert cfg["doc_exts"] == {".rst", ".adoc"}
+    # An empty list is a config mistake, not "index nothing" — fall back to the default.
+    _root, cfg = _repo(tmp_path, "[repolens]\ndoc_exts = []\n")
+    assert cfg["doc_exts"] == root.DEFAULT_DOC_EXTS
+
+
+def test_ext_list_bad_config_fails_loud(tmp_path):
+    # A bare string is the natural TOML mistake — it must NOT silently iterate into
+    # {'.r','.s','.t'}; a non-string element must NOT raise a bare AttributeError.
+    # Both raise a clear ValueError naming the option. Same guard on code_exts.
+    for i, bad in enumerate(
+        ('doc_exts = "rst"', "doc_exts = [123]", 'code_exts = "py"')
+    ):
+        r = tmp_path / f"bad{i}"
+        r.mkdir()
+        (r / ".repolens.toml").write_text("[repolens]\n" + bad + "\n")
+        with pytest.raises(ValueError, match="must be a list of strings"):
+            root.load_config(r)
+
+
+def test_doc_exts_indexes_rst_and_adoc(tmp_path):
+    # The bug this option fixes: a repo holding reStructuredText (Python's docs) or
+    # AsciiDoc (git's own docs) indexed ZERO of them, silently — the walk hardcoded ".md".
+    r = tmp_path / "repo"
+    (r).mkdir()
+    (r / ".repolens.toml").write_text(
+        '[repolens]\ndoc_exts = [".md", ".rst", ".adoc"]\n[semantic]\nenabled = false\n'
+    )
+    (r / "a.md").write_text("# Md\n\nalpha content\n")
+    (r / "b.rst").write_text("Rst\n===\n\nalpha content\n")
+    (r / "c.adoc").write_text("= Adoc\n\nalpha content\n")
+    cfg = root.load_config(r)
+    docs, code, _tables, _ms = index.build(r, cfg)
+    assert docs == 3, "rst and adoc must index alongside md"
+
+    # And their TITLES are extracted, not left blank — the display title comes from the
+    # first heading in any of the three formats, not a `#`-only scan (production blocker).
+    con = sqlite3.connect(cfg["index_path"])
+    titles = dict(con.execute("SELECT relpath, title FROM docs").fetchall())
+    con.close()
+    assert (
+        titles["b.rst"] == "Rst"
+        and titles["c.adoc"] == "Adoc"
+        and titles["a.md"] == "Md"
+    )
+
+    # And a doc ext that is ALSO a code ext indexes once, as code — not twice.
+    (r / ".repolens.toml").write_text(
+        '[repolens]\ndoc_exts = [".md"]\ncode_exts = [".md"]\n[semantic]\nenabled = false\n'
+    )
+    cfg = root.load_config(r)
+    docs, code, _tables, _ms = index.build(r, cfg)
+    assert docs == 0 and code == 1
+
+
 def test_find_root_ignores_install_dir(tmp_path, monkeypatch):
     # A dir with .git but no .repolens.toml, entered as cwd, must resolve to
     # ITSELF — never to the repolens install dir (the __file__ footgun). This
@@ -325,6 +386,25 @@ def test_lint_finds_real_issues(tmp_path):
     assert "dead-link" in checks
     assert "missing-field" in checks
     assert lint.has_errors(findings) is True  # the empty file is an error
+
+
+def test_lint_headed_rst_is_not_flagged_no_heading(tmp_path):
+    # lint walks the doc corpus, which doc_exts now feeds .rst/.adoc into. A headed
+    # .rst/.adoc must NOT be flagged 'no-heading' just because it uses an underline
+    # instead of `#`; a truly heading-less doc still is.
+    _root, cfg = _repo(
+        tmp_path,
+        '[repolens]\ndoc_exts = [".md", ".rst", ".adoc"]\n',
+        {
+            "headed.rst": "Real Title\n==========\n\nbody\n",
+            "sect.adoc": "== A Section\n\nbody\n",
+            "bare.md": "just body text, no heading at all\n",
+        },
+    )
+    findings = lint.lint(tmp_path, cfg)
+    no_head = {f["path"] for f in findings if f["check"] == "no-heading"}
+    assert "headed.rst" not in no_head and "sect.adoc" not in no_head
+    assert "bare.md" in no_head  # a genuinely heading-less doc is still flagged
 
 
 # ── sqlite auto-discovery ──────────────────────────────────────
@@ -741,6 +821,137 @@ def test_chunk_fenced_code_comments_are_not_headings():
     assert any(c.startswith("## Second heading") for c in chunks)
     # and the fake headings never started a section
     assert not any(c.startswith(("# not a heading", "## also not")) for c in chunks)
+
+
+def test_chunk_rst_underline_headings_section_bound():
+    # reStructuredText titles are a text line over a run of punctuation (=, -, ~ …).
+    # doc_exts indexes .rst, so the chunker must section-bound them like Markdown —
+    # otherwise a whole vendor doc lands as one blind chunk and retrieval degrades.
+    rst = (
+        "Interactive Rebase\n==================\n\nRewriting history with rebase.\n\n"
+        "Squashing Commits\n-----------------\n\nCombine commits into one.\n\n"
+        "Resolving Conflicts\n-------------------\n\nFix the same line by hand.\n"
+    )
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(rst, chunk_tokens=40)
+    ]
+    assert firsts == ["Interactive Rebase", "Squashing Commits", "Resolving Conflicts"]
+
+
+def test_chunk_asciidoc_equals_headings_section_bound():
+    # AsciiDoc (git's own docs) uses `== Section`. Treated as a prefix heading.
+    adoc = (
+        "= Git Manual\n\nWhat this covers.\n\n"
+        "== Getting Started\n\nClone and commit.\n\n"
+        "== Branching\n\nIsolate your work.\n"
+    )
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(adoc, chunk_tokens=40)
+    ]
+    assert firsts == ["= Git Manual", "== Getting Started", "== Branching"]
+
+
+def test_chunk_setext_markdown_headings_split():
+    # Bonus: Markdown setext headings (Title over ====/----) were missed before and
+    # now split too — the same underline machinery that handles rst.
+    md = "Introduction\n============\n\nWelcome.\n\nDetails\n=======\n\nThe finer points.\n"
+    firsts = [c.splitlines()[0] for _ix, c in chunk.chunk_document(md, chunk_tokens=40)]
+    assert firsts == ["Introduction", "Details"]
+
+
+def test_chunk_short_equals_underline_section_bounds():
+    # The panel-found blocker: a SHORT `=` underline (<=6 chars) was misread as an
+    # AsciiDoc prefix heading (the regex `\s` matched the newline), so `Usage`/`API`
+    # orphaned from their bodies. The earlier tests all used >6-char underlines and
+    # missed this range entirely.
+    doc = "Usage\n=====\n\nHow to run it.\n\nAPI\n===\n\nThe reference.\n\nFAQ\n===\n\nquestions.\n"
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(doc, chunk_tokens=40)
+    ]
+    assert firsts == ["Usage", "API", "FAQ"]
+    # each section carries its own body, not the next section's underline
+    bodies = [c for _ix, c in chunk.chunk_document(doc, chunk_tokens=40)]
+    assert "How to run it." in bodies[0] and not bodies[0].lstrip().startswith("=")
+
+
+def test_chunk_rst_simple_table_not_shredded():
+    # A reStructuredText simple-table border (`===  ===  =======`) is marker-chars +
+    # spaces only — NOT a heading. Before the fix it was read as an AsciiDoc heading
+    # and each border row started a new section, scattering the table's cells.
+    doc = (
+        "Results\n=======\n\n"
+        "===  ===  =======\n A    B    A and B\n===  ===  =======\n"
+        " T    T    T\n===  ===  =======\n"
+    )
+    firsts = [
+        c.splitlines()[0] for _ix, c in chunk.chunk_document(doc, chunk_tokens=80)
+    ]
+    # exactly one section ("Results"); the table stays whole inside it, no border
+    # row is ever a section head.
+    assert firsts == ["Results"]
+    assert not any(
+        c.lstrip().startswith("===  ") for _ix, c in chunk.chunk_document(doc, 80)
+    )
+
+
+def test_chunk_rst_overline_underline_title_kept_whole():
+    # reStructuredText top-level titles carry a matching adornment ABOVE and below.
+    # The overline must stay WITH the heading, not orphan into its own/previous chunk.
+    # adornment length >= title length (valid reST: "Appetite" is 8, the rule).
+    doc = "prior body text.\n\n==========\nAppetite\n==========\n\nthe section body.\n"
+    chunks = [c for _ix, c in chunk.chunk_document(doc, chunk_tokens=40)]
+    # the heading chunk contains the overline, the title, and the underline together
+    head = next(c for c in chunks if "Appetite" in c)
+    assert head.count("==========") == 2 and head.strip().startswith("==========")
+    # and the prior body is NOT welded to the heading
+    assert "prior body text." not in head
+
+
+def test_chunk_underline_guards_are_load_bearing():
+    # These inputs are chosen so that REMOVING the guard changes the output — the
+    # earlier versions passed even with the guard deleted (false-green). Each assertion
+    # here goes RED if its guard is reverted.
+    #
+    # (a) frontmatter guard: a --- block with a SHORT last line. The length guard can't
+    #     backstop it (--- is 3, 'ok' is 2, 3>=2), so ONLY the frontmatter guard stops
+    #     the closing --- reading as a setext underline of 'ok'.
+    assert chunk.first_heading("---\nok\n---\n\nplain body, no heading.\n") == ""
+    #
+    # (b) length guard: a short `---` under a LONG title, with real content BEFORE it,
+    #     must not split — reST requires the adornment >= the title length. Guard
+    #     removed → the earlier paragraph splits off into its own section.
+    doc = "earlier paragraph text here.\n\nA Very Long Section Title\n---\n\nbody\n"
+    assert len(chunk.chunk_document(doc, chunk_tokens=40)) == 1
+    #
+    # (c) a thematic break with a blank line above it is an <hr>, never a heading.
+    assert (
+        len(chunk.chunk_document("Intro para.\n\n---\n\nMore text.\n", chunk_tokens=40))
+        == 1
+    )
+    #
+    # (d) a Markdown table separator row must not read as an underline.
+    assert (
+        len(chunk.chunk_document("text\n\n| a | b |\n|---|---|\n| 1 | 2 |\n", 40)) == 1
+    )
+
+
+def test_first_heading_across_formats():
+    # The shared title extractor (used by index.py + lint.py) must find the title in
+    # every format doc_exts indexes, not just Markdown `#` — else .rst/.adoc get blank
+    # titles in the index (the production-lens blocker).
+    assert chunk.first_heading("# Markdown Title\n\nbody") == "Markdown Title"
+    assert chunk.first_heading("## SECTION: Foo\n\nbody") == "SECTION: Foo"
+    assert chunk.first_heading("== AsciiDoc Section\n\nbody") == "AsciiDoc Section"
+    assert (
+        chunk.first_heading("Interactive Rebase\n==================\n\nb")
+        == "Interactive Rebase"
+    )
+    assert chunk.first_heading("Short\n=====\n\nb") == "Short"  # short underline too
+    # overline+underline (adornment >= title length, valid reST):
+    assert chunk.first_heading("=========\nOverlined\n=========\n\nb") == "Overlined"
+    assert chunk.first_heading("no heading at all here\n") == ""
+    # a `#` inside a code fence is not the title
+    assert chunk.first_heading("```\n# not a title\n```\n\n# Real\n\nb") == "Real"
 
 
 def test_chunk_never_exceeds_cap():

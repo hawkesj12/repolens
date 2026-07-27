@@ -94,9 +94,11 @@ between the two, and a query about either lands weakly.
 So repolens embeds **per chunk**, and the chunking (`chunk.py`) respects structure instead of
 cutting blindly:
 
-- It splits on **Markdown heading boundaries first**, and a chunk **never crosses a heading**.
-  Each section becomes its own chunk, so its vector represents _that idea_ cleanly. The preamble
-  before the first heading is its own chunk.
+- It splits on **heading boundaries first** — across the prose formats `doc_exts` indexes:
+  Markdown/AsciiDoc prefix headings (`#`, `==`) and reStructuredText/setext underline headings
+  (a title over `=====`/`-----`) — and a chunk **never crosses a heading**. Each section becomes
+  its own chunk, so its vector represents _that idea_ cleanly. The preamble before the first
+  heading is its own chunk.
 - Heading detection is **fence-aware**: a `#` line inside a ` ``` ` or `~~~` code fence is
   a code comment, not a section boundary — splitting there would shred a code snippet across
   chunks.

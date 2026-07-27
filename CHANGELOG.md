@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`doc_exts` — index prose formats other than Markdown.** The file walk hardcoded
+  `.md`, so a repo holding reStructuredText or AsciiDoc indexed **zero** of it, with no
+  error and no warning: those files were simply never walked, and the only symptom was
+  that searches quietly never matched them. Found against a corpus of downloaded vendor
+  documentation where 1,745 of 2,804 files — Python's `Doc/` (`.rst`) and git's
+  `Documentation/` (`.adoc`) — were invisible.
+
+  ```toml
+  [repolens]
+  doc_exts = [".md", ".rst", ".adoc"]   # default: [".md"]
+  ```
+
+  Values are normalised, so `"rst"`, `".rst"` and `".RST"` all work; a bare string or a
+  non-string element is now rejected with a clear error rather than silently iterating
+  into nonsense. An empty list falls back to the default. An extension listed in both
+  `doc_exts` and `code_exts` is indexed once, as code, rather than twice.
+
+  The section-bounded chunker and the title extractor both understand those formats'
+  headings, so `.rst`/`.adoc` get the same per-section chunking **and display titles** as
+  `.md` — not a blind blob with a blank title. Detection spans AsciiDoc `== Section`
+  prefixes and reStructuredText / Markdown-setext underline titles (a line over
+  `=====`/`-----`), and correctly leaves reST simple-table borders, overline+underline
+  titles, thematic breaks, and short underlines intact. Setext-style Markdown headings,
+  previously missed, now split too.
+
+  Notes for large or non-Markdown corpora: turning `doc_exts` on for an already-indexed
+  repo only re-chunks files as they change — run `repolens index --rebuild` once to apply
+  the new chunking/titles to everything. File matching is by lowercased extension (a bare
+  `.md` dotfile is skipped; `README.MD` is included). Non-UTF-8 bytes are dropped on read
+  rather than failing the index.
+
 ### Fixed
 
 - **Windows: repolens now actually works.** Three bugs made it unusable there, all

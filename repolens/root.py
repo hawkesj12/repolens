@@ -42,6 +42,11 @@ DEFAULT_SKIP_DIRS = {
     ".idea",
     ".vscode",
 }
+# Prose formats indexed as DOCS (searched by full content, not by a purpose-line). Markdown
+# is the default because it is what most repos write; `doc_exts` in .repolens.toml overrides
+# it, which is how a repo holding vendor documentation opts in to reStructuredText (the
+# Python ecosystem) or AsciiDoc (git's own docs) instead of silently indexing none of it.
+DEFAULT_DOC_EXTS = {".md"}
 DEFAULT_CODE_EXTS = {
     ".py",
     ".js",
@@ -99,6 +104,27 @@ __all__ = [
 # ═══════════════════════════════════════════════════════════════
 # find_root()
 # ═══════════════════════════════════════════════════════════════
+# _ext_list()
+# ═══════════════════════════════════════════════════════════════
+# Read an extension-list option and FAIL LOUD if it isn't a list of
+# strings. `doc_exts = "rst"` (a bare string) would otherwise iterate
+# into {'.r','.s','.t'} and silently index nothing right; `[123]` would
+# raise a bare AttributeError deeper in. The key isn't present → return
+# the known-good default set untouched.
+# ═══════════════════════════════════════════════════════════════
+def _ext_list(rl: dict, key: str, default):
+    if key not in rl:
+        return default
+    raw = rl[key]
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(e, str) for e in raw):
+        raise ValueError(
+            f"[repolens].{key} must be a list of strings "
+            f'(e.g. {key} = [".md", ".rst"]), got {raw!r}'
+        )
+    return raw
+
+
+# ═══════════════════════════════════════════════════════════════
 # Resolve the repo root: nearest ancestor of `start` (default the
 # cwd) containing .repolens.toml, else .git, else the cwd. Anchored
 # only to the user's location — NEVER __file__ (the install dir),
@@ -125,7 +151,7 @@ def find_root(start: pathlib.Path | str | None = None) -> pathlib.Path:
 # ═══════════════════════════════════════════════════════════════
 # Parse <root>/.repolens.toml and merge over defaults. Returns a dict:
 #   index_path (Path, absolute), skip_dirs (set), skip_files (set),
-#   code_exts (set), types (dict name->{folder,recursive,exclude}),
+#   code_exts (set), doc_exts (set), types (dict name->{folder,recursive,exclude}),
 #   sqlite_paths (list[Path] — the optional DB-table integration, empty
 #   unless [integrations.sqlite] sets `paths` and/or the legacy `path`),
 #   semantic (dict — the hybrid-search tier config).
@@ -164,7 +190,13 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
     # Never index repolens's own config file — it's tooling, not corpus, and otherwise
     # shows up as noise in the very first `find` a new user runs.
     skip_files = {CONFIG_NAME} | set(rl.get("skip_files", []))
-    code_exts = set(rl.get("code_exts", DEFAULT_CODE_EXTS))
+    code_exts = set(_ext_list(rl, "code_exts", DEFAULT_CODE_EXTS))
+    # Normalise so ["rst"], [".RST"] and [".rst"] all work — the extension is compared
+    # against a lowercased os.path.splitext() result at walk time.
+    doc_exts = {
+        (e if e.startswith(".") else "." + e).lower()
+        for e in _ext_list(rl, "doc_exts", DEFAULT_DOC_EXTS)
+    } or set(DEFAULT_DOC_EXTS)
     # Respect .gitignore by DEFAULT — the file corpus skips gitignored paths
     # unless include_gitignored is set (opt-in for personal/knowledge repos).
     include_gitignored = bool(rl.get("include_gitignored", False))
@@ -240,6 +272,7 @@ def load_config(root: pathlib.Path | str | None = None) -> dict:
         "skip_dirs": skip_dirs,
         "skip_files": skip_files,
         "code_exts": code_exts,
+        "doc_exts": doc_exts,
         "types": types,
         "sqlite_paths": sqlite_paths,
         "include_gitignored": include_gitignored,
