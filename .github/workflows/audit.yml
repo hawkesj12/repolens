@@ -38,7 +38,7 @@ jobs:
     # accepts @main just as happily. A rule that cannot fail on the thing it names
     # is worse than no rule, so the exception is gone and this is pinned like
     # every other action here.
-    uses: hawkesj12/workflows/.github/workflows/audit.yml@21bc38462057ea25d0fad8703c7c2a88a05b5d15 # v1.2.3
+    uses: hawkesj12/workflows/.github/workflows/audit.yml@31301b02c63e34963bdbaf3b48529682a69f2714 # v1.2.5
     permissions:
       # The UNION of what every job in the called workflow needs. Permissions only
       # narrow down a reusable-workflow chain, so granting less than a called
