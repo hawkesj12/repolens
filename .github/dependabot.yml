@@ -19,14 +19,25 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Runtime deps (fastembed, sqlite-vec, numpy) plus the pinned dev tools. The
-  # pins are deliberate — they stop an upstream release turning main red on a
-  # commit that changed nothing — but a pin nobody ever bumps becomes a stale
-  # pin. This surfaces each bump as a reviewable PR that CI must pass.
-  - package-ecosystem: pip
+  # uv.lock — the resolution the weekly osv-scanner audits (see audit.yml). This
+  # was `pip` until 2026-11: the pip ecosystem reads pyproject.toml but not
+  # uv.lock, and pyproject's loose `>=` floors never need a bump, so it opened
+  # nothing and the lock sat untouched from July until four transitive CVEs
+  # turned the audit red. The `uv` ecosystem updates uv.lock itself.
+  - package-ecosystem: uv
     directory: "/"
     schedule:
       interval: weekly
+    # Lock only. This is a library: its floors say what users may install, and
+    # raising one just because a newer release exists would narrow that for no
+    # reason. The floors are uncapped, so every newer release is reachable with
+    # a lockfile-only change anyway.
+    versioning-strategy: lockfile-only
+    allow:
+      # Version updates cover DIRECT deps by default. The CVEs that rotted this
+      # lock were all transitive (certifi, filelock, pillow, urllib3), so
+      # without `all` this block would not have caught them either.
+      - dependency-type: all
     cooldown:
       # Don't take a brand-new release the instant it publishes. A compromised
       # version is usually caught within days; waiting a week means the ecosystem
