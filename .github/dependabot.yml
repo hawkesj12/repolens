@@ -1,9 +1,10 @@
 version: 2
 updates:
-  # GitHub Actions are pinned by MUTABLE tags (@v4, @release/v1). A tag can be
-  # repointed by whoever controls that repo — the vector behind real supply-chain
-  # compromises. Dependabot opening PRs here is what makes SHA-pinning
-  # maintainable: it bumps the pin for you instead of the pin rotting.
+  # Every action is pinned to a commit SHA with a `# vX.Y.Z` comment. A tag can
+  # be repointed by whoever controls that repo — the vector behind real
+  # supply-chain compromises — and a SHA cannot. Dependabot opening PRs here is
+  # what makes SHA-pinning maintainable: it bumps the pin and its version
+  # comment together instead of the pin rotting.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
